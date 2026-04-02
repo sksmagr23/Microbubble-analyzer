@@ -108,3 +108,10 @@ async def analyze(file: UploadFile = File(...)):
         temp.write(await file.read())
         result = process_image(temp.name)
     return result
+
+import uvicorn
+import os
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
