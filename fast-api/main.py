@@ -1,4 +1,4 @@
-from fastapi import FastAPI, File, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 import cv2
 import numpy as np
 import tempfile
@@ -15,7 +15,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-def process_image(path):
+def process_image(path, scale, unit):
     # ----------- LOAD IMAGE -----------
     img = cv2.imread(path)
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -85,28 +85,42 @@ def process_image(path):
     _, buffer = cv2.imencode('.jpg', output)
     img_str = base64.b64encode(buffer).decode('utf-8')
 
+    # Convert diameter values from pixels into selected unit.
+    scaled_diameters = [value * scale for value in diameters]
+
     # ----------- HISTOGRAM -----------
-    hist_counts, bin_edges = np.histogram(diameters, bins=15)
+    hist_counts, bin_edges = np.histogram(scaled_diameters, bins=15)
     
     # ----------- SCATTER -----------
-    indices = list(range(len(diameters)))
+    indices = list(range(len(scaled_diameters)))
 
     return {
-    "count": len(diameters),
-    "avg": float(np.mean(diameters)) if diameters else 0,
-    "std": float(np.std(diameters)) if diameters else 0,
-    "diameters": diameters,
+    "count": len(scaled_diameters),
+    "avg": float(np.mean(scaled_diameters)) if scaled_diameters else 0,
+    "std": float(np.std(scaled_diameters)) if scaled_diameters else 0,
+    "diameters": scaled_diameters,
     "hist_counts": hist_counts.tolist(),
     "bin_edges": bin_edges.tolist(),
     "indices": indices,
+    "scale": scale,
+    "unit": unit,
     "image": img_str
 }
 
 @app.post("/analyze")
-async def analyze(file: UploadFile = File(...)):
+async def analyze(
+    file: UploadFile = File(...),
+    scale: float = Form(1.0),
+    unit: str = Form("px"),
+):
+    if scale <= 0:
+        raise HTTPException(status_code=400, detail="Scale must be greater than 0.")
+
+    normalized_unit = unit.strip() or "px"
+
     with tempfile.NamedTemporaryFile(delete=False) as temp:
         temp.write(await file.read())
-        result = process_image(temp.name)
+        result = process_image(temp.name, scale, normalized_unit)
     return result
 
 import uvicorn

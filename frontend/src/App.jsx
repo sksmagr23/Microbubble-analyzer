@@ -31,7 +31,10 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [dragActive, setDragActive] = useState(false);
   const [error, setError] = useState("");
+  const [scale, setScale] = useState("1");
+  const [unit, setUnit] = useState("um");
   const API_URL = import.meta.env.VITE_API_URL;
+  const displayUnit = result?.unit || unit || "px";
 
   const histogramOptions = useMemo(
     () => ({
@@ -56,7 +59,7 @@ export default function App() {
         x: {
           title: {
             display: true,
-            text: "Bubble Diameter (pixels)",
+            text: `Bubble Diameter (${displayUnit})`,
             color: "#ffffff",
             font: { weight: "500" },
           },
@@ -75,7 +78,7 @@ export default function App() {
         },
       },
     }),
-    []
+    [displayUnit]
   );
 
   const scatterOptions = useMemo(
@@ -111,7 +114,7 @@ export default function App() {
         y: {
           title: {
             display: true,
-            text: "Diameter",
+            text: `Diameter (${displayUnit})`,
             color: "#fff",
             font: { weight: "500" },
           },
@@ -120,7 +123,7 @@ export default function App() {
         },
       },
     }),
-    []
+    [displayUnit]
   );
 
   const onFileSelected = (nextFile) => {
@@ -149,10 +152,18 @@ export default function App() {
       return;
     }
 
+    const parsedScale = Number.parseFloat(scale);
+    if (Number.isNaN(parsedScale) || parsedScale <= 0) {
+      setError("Scale must be a number greater than 0.");
+      return;
+    }
+
     setLoading(true);
     setError("");
     const formData = new FormData();
     formData.append("file", file);
+    formData.append("scale", String(parsedScale));
+    formData.append("unit", unit.trim() || "px");
 
     try {
       const res = await axios.post(`${API_URL}/analyze`, formData);
@@ -214,6 +225,37 @@ export default function App() {
               <p className="mt-2 text-sm text-slate-300">or click to browse</p>
             </label>
 
+            <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <label className="text-sm text-slate-200">
+                Scale (unit per pixel)
+                <input
+                  type="number"
+                  min="0"
+                  step="any"
+                  value={scale}
+                  onChange={(event) => setScale(event.target.value)}
+                  className="mt-1 w-full rounded-xl border border-cyan-700/70 bg-slate-800/50 px-3 py-2 text-slate-100 outline-none focus:border-emerald-400"
+                  placeholder="Example: 0.5"
+                />
+              </label>
+
+              <label className="text-sm text-slate-200">
+                Output Unit
+                <select
+                  value={unit}
+                  onChange={(event) => setUnit(event.target.value)}
+                  className="mt-1 w-full rounded-xl border border-cyan-700/70 bg-slate-800/50 px-3 py-2 text-slate-100 outline-none focus:border-emerald-400"
+                >
+                  <option value="um">um</option>
+                  <option value="nm">nm</option>
+                  <option value="mm">mm</option>
+                  <option value="cm">cm</option>
+                  <option value="m">m</option>
+                  <option value="px">px</option>
+                </select>
+              </label>
+            </div>
+
             {error && (
               <div className="mt-4 rounded-xl border border-emerald-400/40 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-100">
                 {error}
@@ -238,11 +280,15 @@ export default function App() {
                   </div>
                   <div className="flex items-center justify-between rounded-xl bg-slate-800/60 px-3 py-2">
                     <span className="text-slate-300">Average Diameter</span>
-                    <span className="font-semibold text-cyan-300">{result.avg.toFixed(2)}</span>
+                    <span className="font-semibold text-cyan-300">
+                      {result.avg.toFixed(2)} {displayUnit}
+                    </span>
                   </div>
                   <div className="flex items-center justify-between rounded-xl bg-slate-800/60 px-3 py-2">
                     <span className="text-slate-300">Standard Deviation</span>
-                    <span className="font-semibold text-emerald-300">{result.std.toFixed(2)}</span>
+                    <span className="font-semibold text-emerald-300">
+                      {result.std.toFixed(2)} {displayUnit}
+                    </span>
                   </div>
                 </div>
               </div>
@@ -302,7 +348,7 @@ export default function App() {
                   data={{
                     datasets: [
                       {
-                        label: "Diameter",
+                        label: `Diameter (${displayUnit})`,
                         data: result.diameters.map((diameter, index) => ({ x: index + 1, y: diameter })),
                         backgroundColor: "rgba(34, 211, 238, 0.9)",
                         borderColor: "rgba(16, 185, 129, 1)",
