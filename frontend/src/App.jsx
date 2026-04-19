@@ -43,15 +43,17 @@ export default function App() {
       plugins: {
         legend: {
           labels: {
-            color: "#d1fae5",
+            color: "#0f172a",
             font: {
               weight: "500",
             },
           },
         },
         tooltip: {
-          backgroundColor: "rgba(3, 23, 40, 0.95)",
-          borderColor: "rgba(45, 212, 191, 0.65)",
+          backgroundColor: "rgba(248, 250, 252, 0.95)",
+          titleColor: "#0f172a",
+          bodyColor: "#0f172a",
+          borderColor: "rgba(148, 163, 184, 0.7)",
           borderWidth: 1,
         },
       },
@@ -60,21 +62,21 @@ export default function App() {
           title: {
             display: true,
             text: `Bubble Diameter (${displayUnit})`,
-            color: "#ffffff",
+            color: "#0f172a",
             font: { weight: "500" },
           },
-          ticks: { color: "#bfdbfe" },
-          grid: { color: "rgba(148, 163, 184, 0.25)" },
+          ticks: { color: "#334155" },
+          grid: { color: "rgba(148, 163, 184, 0)" },
         },
         y: {
           title: {
             display: true,
             text: "Frequency",
-            color: "#ffffff",
+            color: "#0f172a",
             font: { weight: "500" },
           },
-          ticks: { color: "#bfdbfe" },
-          grid: { color: "rgba(148, 163, 184, 0.25)" },
+          ticks: { color: "#334155" },
+          grid: { color: "rgba(148, 163, 184, 0)" },
         },
       },
     }),
@@ -88,15 +90,17 @@ export default function App() {
       plugins: {
         legend: {
           labels: {
-            color: "#ffffff",
+            color: "#0f172a",
             font: {
               weight: "500",
             },
           },
         },
         tooltip: {
-          backgroundColor: "rgba(3, 23, 40, 0.95)",
-          borderColor: "rgba(45, 212, 191, 0.45)",
+          backgroundColor: "rgba(248, 250, 252, 0.95)",
+          titleColor: "#0f172a",
+          bodyColor: "#0f172a",
+          borderColor: "rgba(148, 163, 184, 0.7)",
           borderWidth: 1,
         },
       },
@@ -105,21 +109,21 @@ export default function App() {
           title: {
             display: true,
             text: "Bubble Index",
-            color: "#fff",
+            color: "#0f172a",
             font: { weight: "500" },
           },
-          ticks: { color: "#bfdbfe" },
-          grid: { color: "rgba(148, 163, 184, 0.25)" },
+          ticks: { color: "#334155" },
+          grid: { color: "rgba(148, 163, 184, 0.35)" },
         },
         y: {
           title: {
             display: true,
             text: `Diameter (${displayUnit})`,
-            color: "#fff",
+            color: "#0f172a",
             font: { weight: "500" },
           },
-          ticks: { color: "#bfdbfe" },
-          grid: { color: "rgba(148, 163, 184, 0.25)" },
+          ticks: { color: "#334155" },
+          grid: { color: "rgba(148, 163, 184, 0.35)" },
         },
       },
     }),
@@ -176,20 +180,15 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-900 text-slate-100">
-      <div className="pointer-events-none fixed inset-0 overflow-hidden">
-        <div className="absolute -left-24 -top-24 h-80 w-80 rounded-full bg-cyan-500/20 blur-3xl" />
-        <div className="absolute right-0 top-1/3 h-96 w-96 rounded-full bg-emerald-500/20 blur-3xl" />
-      </div>
-
-      <div className="relative mx-auto max-w-4/5 px-2 py-4 sm:px-1 lg:px-6">
-        <header className="rounded-3xl border border-cyan-900/60 bg-slate-900/65 p-6 shadow-2xl backdrop-blur-xl">
+    <div className="min-h-screen bg-slate-200 text-slate-900">
+      <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
+        <header className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
           <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
             <div>
-              <p className="text-sm font-semibold uppercase tracking-[0.22em] text-yellow-200">
+              <p className="text-sm font-semibold uppercase tracking-[0.16em] text-slate-600">
                 CV + Experimental Insights
               </p>
-              <h1 className="mt-2 text-2xl font-bold text-white sm:text-3xl">
+              <h1 className="mt-1 text-2xl font-bold text-slate-900 sm:text-3xl">
                 Microbubble Analysis Dashboard
               </h1>
             </div>
@@ -197,14 +196,14 @@ export default function App() {
         </header>
 
         <main className="mt-8 grid grid-cols-1 gap-6 xl:grid-cols-2">
-          <section className="rounded-3xl border border-cyan-900/60 bg-slate-900/70 p-6 shadow-xl backdrop-blur-xl">
-            <h2 className="text-lg font-semibold text-cyan-100">Upload Micrographic Image</h2>
+          <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+            <h2 className="text-lg font-semibold text-slate-900">Upload Micrographic Image</h2>
 
             <label
-              className={`mt-5 block cursor-pointer rounded-2xl border-2 border-dashed p-6 text-center transition ${
+              className={`mt-5 block cursor-pointer rounded-xl border-2 border-dashed p-6 text-center transition ${
                 dragActive
-                  ? "border-emerald-300 bg-emerald-500/10"
-                  : "border-cyan-700/60 bg-slate-800/40 hover:border-cyan-400 hover:bg-cyan-500/10"
+                  ? "border-slate-500 bg-slate-100"
+                  : "border-slate-300 bg-slate-50 hover:border-slate-400"
               }`}
               onDragOver={(event) => {
                 event.preventDefault();
@@ -219,14 +218,14 @@ export default function App() {
                 className="hidden"
                 onChange={(event) => onFileSelected(event.target.files?.[0])}
               />
-              <p className="text-base font-medium text-cyan-100">
+              <p className="text-base font-medium text-slate-800">
                 {file ? file.name : "Drag and drop an image here"}
               </p>
-              <p className="mt-2 text-sm text-slate-300">or click to browse</p>
+              <p className="mt-2 text-sm text-slate-500">or click to browse</p>
             </label>
 
             <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <label className="text-sm text-slate-200">
+              <label className="text-sm text-slate-700">
                 Scale (unit per pixel)
                 <input
                   type="number"
@@ -234,17 +233,17 @@ export default function App() {
                   step="any"
                   value={scale}
                   onChange={(event) => setScale(event.target.value)}
-                  className="mt-1 w-full rounded-xl border border-cyan-700/70 bg-slate-800/50 px-3 py-2 text-slate-100 outline-none focus:border-emerald-400"
+                  className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900 outline-none focus:border-slate-500"
                   placeholder="Example: 0.5"
                 />
               </label>
 
-              <label className="text-sm text-slate-200">
+              <label className="text-sm text-slate-700">
                 Output Unit
                 <select
                   value={unit}
                   onChange={(event) => setUnit(event.target.value)}
-                  className="mt-1 w-full rounded-xl border border-cyan-700/70 bg-slate-800/50 px-3 py-2 text-slate-100 outline-none focus:border-emerald-400"
+                  className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900 outline-none focus:border-slate-500"
                 >
                   <option value="um">um</option>
                   <option value="nm">nm</option>
@@ -257,7 +256,7 @@ export default function App() {
             </div>
 
             {error && (
-              <div className="mt-4 rounded-xl border border-emerald-400/40 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-100">
+              <div className="mt-4 rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-sm text-rose-700">
                 {error}
               </div>
             )}
@@ -265,28 +264,28 @@ export default function App() {
             <button
               onClick={handleUpload}
               disabled={loading}
-              className="mt-5 w-full rounded-xl bg-linear-to-r from-emerald-500 to-cyan-500 px-4 py-3 text-sm font-semibold text-slate-950 shadow-lg shadow-emerald-900/30 transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer"
+              className="mt-5 w-full cursor-pointer rounded-lg bg-slate-900 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {loading ? "Processing Image..." : "Analyze Image"}
             </button>
 
             {result && (
-              <div className="mt-5 rounded-2xl border border-cyan-900/60 bg-slate-800/40 p-4">
-                <h3 className="text-sm font-semibold uppercase tracking-[0.18em] text-cyan-200">Quick Metrics</h3>
+              <div className="mt-5 rounded-xl border border-slate-200 bg-slate-50 p-4">
+                <h3 className="text-sm font-semibold uppercase tracking-[0.16em] text-slate-600">Quick Metrics</h3>
                 <div className="mt-3 space-y-3 text-md">
-                  <div className="flex items-center justify-between rounded-xl bg-slate-800/60 px-3 py-2">
-                    <span className="text-slate-300">Bubble Count</span>
-                    <span className="font-semibold text-yellow-200">{result.count}</span>
+                  <div className="flex items-center justify-between rounded-lg bg-white px-3 py-2 border border-slate-200">
+                    <span className="text-slate-600">Bubble Count</span>
+                    <span className="font-semibold text-slate-900">{result.count}</span>
                   </div>
-                  <div className="flex items-center justify-between rounded-xl bg-slate-800/60 px-3 py-2">
-                    <span className="text-slate-300">Average Diameter</span>
-                    <span className="font-semibold text-cyan-300">
+                  <div className="flex items-center justify-between rounded-lg bg-white px-3 py-2 border border-slate-200">
+                    <span className="text-slate-600">Average Diameter</span>
+                    <span className="font-semibold text-slate-900">
                       {result.avg.toFixed(2)} {displayUnit}
                     </span>
                   </div>
-                  <div className="flex items-center justify-between rounded-xl bg-slate-800/60 px-3 py-2">
-                    <span className="text-slate-300">Standard Deviation</span>
-                    <span className="font-semibold text-emerald-300">
+                  <div className="flex items-center justify-between rounded-lg bg-white px-3 py-2 border border-slate-200">
+                    <span className="text-slate-600">Standard Deviation</span>
+                    <span className="font-semibold text-slate-900">
                       {result.std.toFixed(2)} {displayUnit}
                     </span>
                   </div>
@@ -295,8 +294,8 @@ export default function App() {
             )}
           </section>
 
-          <section className="rounded-3xl border border-cyan-900/60 bg-slate-900/70 p-5 shadow-xl backdrop-blur-xl">
-            <h2 className="text-lg font-semibold text-cyan-100">Processed Image</h2>
+          <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <h2 className="text-lg font-semibold text-slate-900">Processed Image</h2>
             {result ? (
               <img
                 className="mt-4 h-5/6 w-full object-contain"
@@ -304,14 +303,14 @@ export default function App() {
                 alt="Processed"
               />
             ) : (
-              <div className="mt-4 flex h-5/6 items-center justify-center rounded-2xl border border-cyan-700/60 bg-slate-800/30 text-sm text-slate-300">
+              <div className="mt-4 flex h-5/6 items-center justify-center rounded-xl border border-slate-300 bg-slate-50 text-sm text-slate-500">
                 Upload an image and run analysis.
               </div>
             )}
           </section>
 
-          <section className="rounded-3xl border border-cyan-900/60 bg-slate-900/60 p-5 shadow-xl backdrop-blur-xl">
-            <h2 className="text-xl font-semibold text-yellow-200">Bubble Size Distribution</h2>
+          <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <h2 className="text-xl font-semibold text-slate-900">Bubble Size Distribution</h2>
             <div className="mt-4 h-110">
               {result ? (
                 <Bar
@@ -322,25 +321,27 @@ export default function App() {
                       {
                         label: "Frequency",
                         data: result.hist_counts,
-                        backgroundColor: "rgba(16, 185, 129, 0.8)",
-                        borderColor: "rgba(6, 182, 212, 0.9)",
-                        borderWidth: 1,
-                        borderRadius: 1,
+                        backgroundColor: "rgba(37, 99, 235, 0.8)",
+                        borderColor: "rgba(30, 64, 175, 1)",
+                        borderWidth: 0,
+                        borderRadius: 0,
+                        categoryPercentage: 1.0,
+                        barPercentage: 1.0,
                       },
                     ],
                   }}
                   options={histogramOptions}
                 />
               ) : (
-                <div className="flex h-full items-center justify-center rounded-2xl border border-cyan-700/60 bg-slate-800/30 text-sm text-slate-300">
+                <div className="flex h-full items-center justify-center rounded-xl border border-slate-300 bg-slate-50 text-sm text-slate-500">
                   Histogram will appear after analysis.
                 </div>
               )}
             </div>
           </section>
 
-          <section className="rounded-3xl border border-cyan-900/60 bg-slate-900/60 p-5 shadow-xl backdrop-blur-xl">
-            <h2 className="text-xl font-semibold text-yellow-200">Bubble Diameters</h2>
+          <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <h2 className="text-xl font-semibold text-slate-900">Bubble Diameters</h2>
             <div className="mt-4 h-110">
               {result ? (
                 <Scatter
@@ -350,8 +351,8 @@ export default function App() {
                       {
                         label: `Diameter (${displayUnit})`,
                         data: result.diameters.map((diameter, index) => ({ x: index + 1, y: diameter })),
-                        backgroundColor: "rgba(34, 211, 238, 0.9)",
-                        borderColor: "rgba(16, 185, 129, 1)",
+                        backgroundColor: "rgba(30, 64, 175, 0.9)",
+                        borderColor: "rgba(15, 23, 42, 1)",
                         pointRadius: 4,
                       },
                     ],
@@ -359,7 +360,7 @@ export default function App() {
                   options={scatterOptions}
                 />
               ) : (
-                <div className="flex h-full items-center justify-center rounded-2xl border border-cyan-700/60 bg-slate-800/30 text-sm text-slate-300">
+                <div className="flex h-full items-center justify-center rounded-xl border border-slate-300 bg-slate-50 text-sm text-slate-500">
                   Scatter plot will appear after analysis.
                 </div>
               )}
