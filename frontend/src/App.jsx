@@ -36,6 +36,11 @@ export default function App() {
   const API_URL = import.meta.env.VITE_API_URL;
   const displayUnit = result?.unit || unit || "px";
 
+  const [pH, setPh] = useState(7);
+  const [stabilityResult, setStabilityResult] = useState(null);
+  const [loadingStability, setLoadingStability] = useState(false);
+  const [stabilityError, setStabilityError] = useState("");
+
   const histogramOptions = useMemo(
     () => ({
       responsive: true,
@@ -176,6 +181,20 @@ export default function App() {
       setError("Upload failed. Ensure that Fast API is running.");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleStabilityAnalysis = async () => {
+    setLoadingStability(true);
+    setStabilityError("");
+    setStabilityResult(null);
+    try {
+      const res = await axios.post(`${API_URL}/stability`, { pH: Number.parseFloat(pH) });
+      setStabilityResult(res.data);
+    } catch {
+      setStabilityError("Failed to fetch stability analysis. Ensure FastAPI is running.");
+    } finally {
+      setLoadingStability(false);
     }
   };
 
@@ -365,6 +384,67 @@ export default function App() {
                 </div>
               )}
             </div>
+          </section>
+
+          <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm col-span-1 xl:col-span-2">
+            <h2 className="text-xl font-semibold text-slate-900">Emulsion Stability Predictor</h2>
+            <div className="mt-4 flex flex-col gap-4 sm:flex-row sm:items-end">
+              <label className="text-sm text-slate-700 flex-1">
+                pH of the emulsion (0-14)
+                <input
+                  type="number"
+                  min="0"
+                  max="14"
+                  step="0.1"
+                  value={pH}
+                  onChange={(e) => setPh(e.target.value)}
+                  className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900 outline-none focus:border-slate-500"
+                />
+              </label>
+              <button
+                onClick={handleStabilityAnalysis}
+                disabled={loadingStability}
+                className="w-full sm:w-auto cursor-pointer rounded-lg bg-slate-900 px-6 py-2 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {loadingStability ? "Analyzing..." : "Predict Stability"}
+              </button>
+            </div>
+            
+            {stabilityError && (
+              <div className="mt-4 rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                {stabilityError}
+              </div>
+            )}
+            
+            {stabilityResult && (
+              <div className="mt-5 rounded-xl border border-slate-200 bg-slate-50 p-4">
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                  <div className="flex flex-col rounded-lg bg-white px-4 py-3 border border-slate-200">
+                    <span className="text-sm text-slate-500">Interpolated @ 30 min</span>
+                    <span className="mt-1 text-lg font-semibold text-slate-900">{stabilityResult.h1.toFixed(2)} cm</span>
+                  </div>
+                  <div className="flex flex-col rounded-lg bg-white px-4 py-3 border border-slate-200">
+                    <span className="text-sm text-slate-500">Interpolated @ 2 days</span>
+                    <span className="mt-1 text-lg font-semibold text-slate-900">{stabilityResult.h2.toFixed(2)} cm</span>
+                  </div>
+                  <div className="flex flex-col rounded-lg bg-white px-4 py-3 border border-slate-200">
+                    <span className="text-sm text-slate-500">Estimated Half-life</span>
+                    <span className="mt-1 text-lg font-semibold text-slate-900">
+                      {stabilityResult.highly_stable ? "Very long" : `${stabilityResult.half_life.toFixed(0)} min`}
+                    </span>
+                    {!stabilityResult.highly_stable && (
+                      <span className="mt-1 text-xs text-slate-500">
+                        (~{(stabilityResult.half_life / 60).toFixed(1)} h / ~{(stabilityResult.half_life / 1440).toFixed(2)} days)
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex flex-col rounded-lg bg-white px-4 py-3 border border-slate-200">
+                    <span className="text-sm text-slate-500">Stability Class</span>
+                    <span className="mt-1 text-lg font-semibold text-slate-900">{stabilityResult.stability_class}</span>
+                  </div>
+                </div>
+              </div>
+            )}
           </section>
         </main>
       </div>

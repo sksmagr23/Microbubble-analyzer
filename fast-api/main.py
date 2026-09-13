@@ -4,6 +4,7 @@ import numpy as np
 import tempfile
 import base64
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 
 app = FastAPI()
 
@@ -14,6 +15,45 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ---------------------------------------------------------------------------
+# Stability Model
+# ---------------------------------------------------------------------------
+t1 = 30
+t2 = 2 * 24 * 60
+
+pH_data = [1.5, 3, 6, 9, 12]
+h1_data = [2.23, 2.17, 2.20, 2.19, 2.20]
+h2_data = [1.52, 1.93, 2.19, 1.78, 1.43]
+
+def interpolated_heights(pH):
+    pH_clamped = max(min(pH, max(pH_data)), min(pH_data))
+    h1 = np.interp(pH_clamped, pH_data, h1_data)
+    h2 = np.interp(pH_clamped, pH_data, h2_data)
+    return float(h1), float(h2)
+
+def half_life(pH):
+    h1, h2 = interpolated_heights(pH)
+    if h2 >= h1:
+        return None, h1, h2
+    k = np.log(h1 / h2) / (t2 - t1)
+    t_hl = np.log(2) / k
+    return float(t_hl), h1, h2
+
+def describe_stability(t_hl_minutes):
+    days = t_hl_minutes / 1440
+    if days > 10:
+        return "Highly stable"
+    elif days > 5:
+        return "Moderately stable"
+    elif days > 2:
+        return "Low stability"
+    else:
+        return "Unstable / breaks down quickly"
+
+class StabilityRequest(BaseModel):
+    pH: float
+
 
 def process_image(path, scale, unit):
     # ----------- LOAD IMAGE -----------
@@ -122,6 +162,19 @@ async def analyze(
         temp.write(await file.read())
         result = process_image(temp.name, scale, normalized_unit)
     return result
+
+@app.post("/stability")
+async def stability(req: StabilityRequest):
+    pH = req.pH
+    t_hl, h1, h2 = half_life(pH)
+    stability_class = "Highly stable" if t_hl is None else describe_stability(t_hl)
+    return {
+        "h1": h1,
+        "h2": h2,
+        "half_life": t_hl,
+        "stability_class": stability_class,
+        "highly_stable": t_hl is None
+    }
 
 import uvicorn
 import os
