@@ -163,17 +163,98 @@ async def analyze(
         result = process_image(temp.name, scale, normalized_unit)
     return result
 
+def generate_curve_points(h0: float, k: float, max_hours: float, num_points: int = 60):
+    times = np.linspace(0, max_hours, num_points)
+    key_points = [0.0]
+    if max_hours >= 0.5:
+        key_points.append(0.5)
+    if max_hours >= 48.0:
+        key_points.append(48.0)
+    all_times = sorted(list(set(np.round(np.concatenate([times, key_points]), 2))))
+    return [
+        {
+            "time_hours": float(t),
+            "time_days": round(float(t) / 24.0, 2),
+            "time_minutes": round(float(t) * 60.0, 1),
+            "height": round(float(h0 * np.exp(-k * t * 60.0)), 3),
+        }
+        for t in all_times
+    ]
+
 @app.post("/stability")
 async def stability(req: StabilityRequest):
     pH = req.pH
     t_hl, h1, h2 = half_life(pH)
     stability_class = "Highly stable" if t_hl is None else describe_stability(t_hl)
+
+    if h2 >= h1:
+        k = 0.0
+        h0 = h1
+        equation_hours = f"h(t) = {h0:.2f} cm (Constant / No Decay)"
+        equation_days = f"h(t) = {h0:.2f} cm (Constant / No Decay)"
+    else:
+        k = float(np.log(h1 / h2) / (t2 - t1))
+        h0 = float(h1 * np.exp(k * t1))
+        k_hr = k * 60.0
+        k_day = k * 1440.0
+        equation_hours = f"h(t) = {h0:.2f} · e^(-{k_hr:.4f} · t)"
+        equation_days = f"h(t) = {h0:.2f} · e^(-{k_day:.3f} · t)"
+
+    # Compute exponential curves for multiple horizons:
+    # 48 hours (experimental observation period)
+    curve_48h = generate_curve_points(h0, k, max_hours=48.0, num_points=50)
+    # 7 days (168 hours)
+    curve_7d = generate_curve_points(h0, k, max_hours=168.0, num_points=70)
+    # 14 days (336 hours)
+    curve_14d = generate_curve_points(h0, k, max_hours=336.0, num_points=70)
+    # Full horizon: 2x half-life or 30 days (max 720 hours = 30 days)
+    full_horizon_hours = min(max(48.0, (t_hl / 60.0 * 2.0) if t_hl else 336.0), 720.0)
+    curve_full = generate_curve_points(h0, k, max_hours=full_horizon_hours, num_points=80)
+
+    experimental_points = [
+        {
+            "time_hours": 0.5,
+            "time_days": round(0.5 / 24.0, 3),
+            "time_minutes": 30.0,
+            "time_label": "30 min (0.5 h)",
+            "height": round(h1, 3),
+        },
+        {
+            "time_hours": 48.0,
+            "time_days": 2.0,
+            "time_minutes": 2880.0,
+            "time_label": "2 days (48 h)",
+            "height": round(h2, 3),
+        },
+    ]
+
+    half_life_hours = (t_hl / 60.0) if t_hl else None
+    half_life_days = (t_hl / 1440.0) if t_hl else None
+
     return {
         "h1": h1,
         "h2": h2,
         "half_life": t_hl,
+        "half_life_hours": half_life_hours,
+        "half_life_days": half_life_days,
         "stability_class": stability_class,
-        "highly_stable": t_hl is None
+        "highly_stable": t_hl is None,
+        "decay_constant": k,
+        "decay_constant_per_hour": k * 60.0,
+        "decay_constant_per_day": k * 1440.0,
+        "initial_height": round(h0, 3),
+        "half_height": round(h0 / 2.0, 3),
+        "equation_hours": equation_hours,
+        "equation_days": equation_days,
+        "curve": curve_48h,
+        "curves": {
+            "48h": curve_48h,
+            "7d": curve_7d,
+            "14d": curve_14d,
+            "full": curve_full,
+        },
+        "full_horizon_hours": full_horizon_hours,
+        "experimental_points": experimental_points,
     }
 
 import uvicorn

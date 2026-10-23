@@ -22,8 +22,7 @@ ChartJS.register(
   Tooltip,
   Legend
 );
-import { Bar } from "react-chartjs-2";
-import { Scatter } from "react-chartjs-2";
+import { Bar, Scatter, Line } from "react-chartjs-2";
 
 export default function App() {
   const [file, setFile] = useState(null);
@@ -40,6 +39,7 @@ export default function App() {
   const [stabilityResult, setStabilityResult] = useState(null);
   const [loadingStability, setLoadingStability] = useState(false);
   const [stabilityError, setStabilityError] = useState("");
+  const [timeHorizon, setTimeHorizon] = useState("7d");
 
   const histogramOptions = useMemo(
     () => ({
@@ -134,6 +134,182 @@ export default function App() {
     }),
     [displayUnit]
   );
+
+  const heightVsTimeOptions = useMemo(() => {
+    let maxX = 48;
+    let stepSize = 6;
+    let xAxisTitle = "Time (hours)";
+    let tickFormatter = (value) => {
+      if (value === 0) return "0 h";
+      if (value === 24) return "24 h (1d)";
+      if (value === 48) return "48 h (2d)";
+      return `${value} h`;
+    };
+
+    if (timeHorizon === "7d") {
+      maxX = 168;
+      stepSize = 24;
+      xAxisTitle = "Time (days / hours)";
+      tickFormatter = (value) => {
+        const days = Math.round(value / 24);
+        if (value === 0) return "Day 0";
+        if (value === 48) return "Day 2 (48h)";
+        return `Day ${days} (${value}h)`;
+      };
+    } else if (timeHorizon === "14d") {
+      maxX = 336;
+      stepSize = 48;
+      xAxisTitle = "Time (days)";
+      tickFormatter = (value) => {
+        const days = Math.round(value / 24);
+        return `Day ${days}`;
+      };
+    } else if (timeHorizon === "full") {
+      maxX = stabilityResult?.full_horizon_hours || 168;
+      stepSize = maxX > 200 ? 72 : 24;
+      xAxisTitle = "Time (days / hours)";
+      tickFormatter = (value) => {
+        const days = Math.round((value / 24) * 10) / 10;
+        return `${days}d (${value}h)`;
+      };
+    }
+
+    const maxY = Math.ceil(((stabilityResult?.initial_height || 2.25) * 1.15) * 10) / 10;
+
+    return {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: {
+          display: true,
+          position: "top",
+          labels: {
+            color: "#0f172a",
+            font: {
+              weight: "500",
+            },
+            usePointStyle: true,
+          },
+        },
+        tooltip: {
+          backgroundColor: "rgba(248, 250, 252, 0.95)",
+          titleColor: "#0f172a",
+          bodyColor: "#0f172a",
+          borderColor: "rgba(148, 163, 184, 0.7)",
+          borderWidth: 1,
+          callbacks: {
+            title: (items) => {
+              if (!items.length) return "";
+              const x = items[0].parsed.x;
+              if (x === 0.5) return "Time: 30 minutes (0.5 h)";
+              if (x === 24) return "Time: 24 hours (1 day)";
+              if (x === 48) return "Time: 48 hours (2 days)";
+              const days = (x / 24).toFixed(1);
+              return `Time: ${x} hours (~${days} days)`;
+            },
+            label: (item) => {
+              const y = item.parsed.y;
+              const dsLabel = item.dataset.label || "Value";
+              return ` ${dsLabel}: ${y.toFixed(2)} cm`;
+            },
+          },
+        },
+      },
+      scales: {
+        x: {
+          type: "linear",
+          title: {
+            display: true,
+            text: xAxisTitle,
+            color: "#0f172a",
+            font: { weight: "500" },
+          },
+          min: 0,
+          max: maxX,
+          ticks: {
+            color: "#334155",
+            stepSize,
+            callback: tickFormatter,
+          },
+          grid: { color: "rgba(148, 163, 184, 0.35)" },
+        },
+        y: {
+          min: 0,
+          max: maxY,
+          title: {
+            display: true,
+            text: "Emulsion Height (cm)",
+            color: "#0f172a",
+            font: { weight: "500" },
+          },
+          ticks: { color: "#334155" },
+          grid: { color: "rgba(148, 163, 184, 0.35)" },
+        },
+      },
+    };
+  }, [timeHorizon, stabilityResult]);
+
+  const heightVsTimeData = useMemo(() => {
+    if (!stabilityResult) return null;
+    const activeCurve = stabilityResult?.curves?.[timeHorizon] || stabilityResult?.curve || [];
+    if (!activeCurve.length) return null;
+
+    let maxX = 48;
+    if (timeHorizon === "7d") maxX = 168;
+    if (timeHorizon === "14d") maxX = 336;
+    if (timeHorizon === "full") maxX = stabilityResult?.full_horizon_hours || 168;
+
+    const datasets = [
+      {
+        type: "line",
+        label: "Exponential Decay Curve h(t) = h₀ · e⁻ᵏᵗ",
+        data: activeCurve.map((pt) => ({ x: pt.time_hours, y: pt.height })),
+        borderColor: "rgba(79, 2, 229, 1)",
+        backgroundColor: "rgba(79, 2, 229, 0.08)",
+        borderWidth: 2.5,
+        pointRadius: 0,
+        pointHoverRadius: 5,
+        tension: 0.25,
+        fill: true,
+      },
+      {
+        type: "line",
+        label: "Experimental Measurements",
+        data: (stabilityResult.experimental_points || [])
+          .filter((pt) => pt.time_hours <= maxX)
+          .map((pt) => ({
+            x: pt.time_hours,
+            y: pt.height,
+          })),
+        borderColor: "rgba(225, 29, 72, 1)",
+        backgroundColor: "rgba(225, 29, 72, 1)",
+        pointRadius: 6,
+        pointHoverRadius: 8,
+        pointStyle: "circle",
+        showLine: false,
+      },
+    ];
+
+    if (stabilityResult?.half_height && !stabilityResult.highly_stable) {
+      datasets.push({
+        type: "line",
+        label: `Half-Life Level (h₀ / 2 = ${stabilityResult.half_height.toFixed(2)} cm)`,
+        data: [
+          { x: 0, y: stabilityResult.half_height },
+          { x: maxX, y: stabilityResult.half_height },
+        ],
+        borderColor: "rgba(234, 88, 12, 0.8)",
+        backgroundColor: "transparent",
+        borderWidth: 1.5,
+        borderDash: [6, 4],
+        pointRadius: 0,
+        pointHoverRadius: 0,
+        fill: false,
+      });
+    }
+
+    return { datasets };
+  }, [stabilityResult, timeHorizon]);
 
   const onFileSelected = (nextFile) => {
     if (!nextFile) {
@@ -410,7 +586,12 @@ export default function App() {
           </section>
 
           <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm col-span-1 xl:col-span-2">
-            <h2 className="text-xl font-semibold text-slate-900">Emulsion Stability Predictor</h2>
+            <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h2 className="text-xl font-semibold text-slate-900">Emulsion Stability Predictor</h2>
+                <p className="text-xs text-slate-500">First-order decay model: h(t) = h₀ · e⁻ᵏᵗ</p>
+              </div>
+            </div>
             
             {stabilityError && (
               <div className="mt-4 rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-sm text-rose-700">
@@ -419,26 +600,96 @@ export default function App() {
             )}
             
             {stabilityResult && (
-              <div className="mt-5 rounded-xl border border-slate-200 bg-slate-50 p-4">
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                  <div className="flex flex-col rounded-lg bg-white px-4 py-3 border border-slate-200">
-                    <span className="text-sm text-slate-500">Estimated Half-life</span>
-                    <span className="mt-1 text-lg font-semibold text-slate-900">
-                      {stabilityResult.highly_stable ? "Very long" : `${stabilityResult.half_life.toFixed(0)} min`}
-                    </span>
-                    {!stabilityResult.highly_stable && (
-                      <span className="mt-1 text-xs text-slate-900">
-                        (~{(stabilityResult.half_life / 60).toFixed(1)} h / ~{(stabilityResult.half_life / 1440).toFixed(2)} days)
+              <>
+                <div className="mt-5 rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                    <div className="flex flex-col rounded-lg bg-white px-4 py-3 border border-slate-200">
+                      <span className="text-sm text-slate-500">Estimated Half-life</span>
+                      <span className="mt-1 text-lg font-semibold text-slate-900">
+                        {stabilityResult.highly_stable ? "Very long" : `${stabilityResult.half_life.toFixed(0)} min`}
                       </span>
-                    )}
-                  </div>
-                  <div className="flex flex-col rounded-lg bg-white px-4 py-3 border border-slate-200">
-                    <span className="text-sm text-slate-500">Stability Class</span>
-                    <span className="mt-1 text-lg font-semibold text-slate-900">{stabilityResult.stability_class}</span>
+                      {!stabilityResult.highly_stable && (
+                        <span className="mt-1 text-xs text-slate-500">
+                          (~{(stabilityResult.half_life / 60).toFixed(1)} h / ~{(stabilityResult.half_life / 1440).toFixed(2)} days)
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex flex-col rounded-lg bg-white px-4 py-3 border border-slate-200">
+                      <span className="text-sm text-slate-500">Stability Class</span>
+                      <span className="mt-1 text-lg font-semibold text-slate-900">{stabilityResult.stability_class}</span>
+                    </div>
                   </div>
                 </div>
-              </div>
+
+                <div className="mt-4 rounded-xl border border-indigo-100 bg-indigo-50/70 p-4">
+                  <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
+                    <div>
+                      <span className="text-xs font-semibold uppercase tracking-wider text-indigo-700">
+                        Fitted Exponential Model
+                      </span>
+                      <p className="mt-0.5 text-base sm:text-lg font-bold font-mono text-indigo-950">
+                        {stabilityResult.equation_days}
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap gap-2 text-xs">
+                      <div className="rounded-md bg-white px-3 py-1.5 font-medium text-slate-700 border border-slate-200 shadow-xs">
+                        Initial Height h₀: <span className="font-semibold text-slate-900">{stabilityResult.initial_height?.toFixed(2)} cm</span>
+                      </div>
+                      <div className="rounded-md bg-white px-3 py-1.5 font-medium text-slate-700 border border-slate-200 shadow-xs">
+                        Decay Constant k: <span className="font-semibold text-slate-900">{stabilityResult.decay_constant_per_day?.toFixed(3)} / day</span>
+                      </div>
+                      <div className="rounded-md bg-white px-3 py-1.5 font-medium text-slate-700 border border-slate-200 shadow-xs">
+                        Half-Life t₁/₂: <span className="font-semibold text-slate-900">{stabilityResult.half_life_days ? `${stabilityResult.half_life_days.toFixed(2)} days` : "Very long"}</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </>
             )}
+
+            <div className="mt-6">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h3 className="text-lg font-semibold text-slate-900">Emulsion Height vs. Time (Exponential Decay)</h3>
+                  <p className="text-xs text-slate-500">
+                    Switch time windows to view the 2-day lab data or extended exponential curvature
+                  </p>
+                </div>
+                {stabilityResult && (
+                  <div className="inline-flex rounded-lg border border-slate-200 bg-slate-100 p-1 self-start sm:self-auto">
+                    {[
+                      { id: "48h", label: "48 Hours" },
+                      { id: "7d", label: "7 Days" },
+                      { id: "14d", label: "14 Days" },
+                      { id: "full", label: "Full Decay" },
+                    ].map((btn) => (
+                      <button
+                        key={btn.id}
+                        type="button"
+                        onClick={() => setTimeHorizon(btn.id)}
+                        className={`px-3 py-1.5 text-xs font-medium rounded-md transition cursor-pointer ${
+                          timeHorizon === btn.id
+                            ? "bg-white text-indigo-700 shadow-xs font-semibold"
+                            : "text-slate-600 hover:text-slate-900"
+                        }`}
+                      >
+                        {btn.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="mt-4 h-100">
+                {heightVsTimeData ? (
+                  <Line data={heightVsTimeData} options={heightVsTimeOptions} />
+                ) : (
+                  <div className="flex h-full items-center justify-center rounded-xl border border-slate-300 bg-slate-50 text-sm text-slate-500">
+                    Height vs. Time exponential decay curve will appear after predicting stability.
+                  </div>
+                )}
+              </div>
+            </div>
           </section>
         </main>
       </div>
