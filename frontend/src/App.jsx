@@ -73,9 +73,9 @@ const PRESETS = {
     rows: [
       { id: "1", name: "pH 1.5", heights: ["2.23", "1.52"] },
       { id: "2", name: "pH 3.0", heights: ["2.17", "1.93"] },
-      { id: "3", name: "pH 6.0", heights: ["2.20", "2.19"] },
+      { id: "3", name: "pH 7.0", heights: ["2.20", "2.19"] },
       { id: "4", name: "pH 9.0", heights: ["2.19", "1.78"] },
-      { id: "5", name: "pH 12.0", heights: ["2.20", "1.43"] },
+      { id: "5", name: "pH 11.0", heights: ["2.20", "1.43"] },
     ],
   },
   custom: {
