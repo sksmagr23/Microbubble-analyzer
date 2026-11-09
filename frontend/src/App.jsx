@@ -24,6 +24,8 @@ ChartJS.register(
   Legend
 );
 
+ChartJS.defaults.font.family = "Verdana, Geneva, Tahoma, sans-serif";
+
 const SERIES_COLORS = [
   "#2563eb", // blue-600
   "#059669", // emerald-600
@@ -99,8 +101,30 @@ export default function App() {
   const [error, setError] = useState("");
   const [scale, setScale] = useState("1");
   const [unit, setUnit] = useState("um");
-  const API_URL = import.meta.env.VITE_API_URL;
+  const API_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
   const displayUnit = result?.unit || unit || "px";
+
+  // Actual vs Predicted Image Comparison States
+  const [actualFile, setActualFile] = useState(null);
+  const [predictedFile, setPredictedFile] = useState(null);
+  const [actualDragActive, setActualDragActive] = useState(false);
+  const [predictedDragActive, setPredictedDragActive] = useState(false);
+  const [invertActual, setInvertActual] = useState(false);
+  const [invertPredicted, setInvertPredicted] = useState(false);
+  const [comparisonResult, setComparisonResult] = useState(null);
+  const [loadingComparison, setLoadingComparison] = useState(false);
+  const [comparisonError, setComparisonError] = useState("");
+  const [comparisonViewMode, setComparisonViewMode] = useState("gray"); // "gray" | "binary"
+  const [comparisonHistMode, setComparisonHistMode] = useState("pct"); // "pct" | "count"
+
+  // ML Microscopic Image Generator States
+  const [mlRpm, setMlRpm] = useState("10000");
+  const [mlMixingTime, setMlMixingTime] = useState("1.5");
+  const [mlPh, setMlPh] = useState("7.0");
+  const [mlScaleUmPerPx, setMlScaleUmPerPx] = useState("0.5");
+  const [mlGeneratedData, setMlGeneratedData] = useState(null);
+  const [loadingMlGen, setLoadingMlGen] = useState(false);
+  const [mlGenError, setMlGenError] = useState("");
 
   // Single pH Predictor States
   const [pH, setPh] = useState(7);
@@ -522,6 +546,272 @@ export default function App() {
     return { datasets };
   }, [multiStabilityResult, multiTimeHorizon]);
 
+  const comparisonHistogramOptions = useMemo(
+    () => ({
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: {
+          position: "top",
+          labels: {
+            color: "#0f172a",
+            font: { weight: "500" },
+          },
+        },
+        tooltip: {
+          backgroundColor: "rgba(248, 250, 252, 0.95)",
+          titleColor: "#0f172a",
+          bodyColor: "#0f172a",
+          borderColor: "rgba(148, 163, 184, 0.7)",
+          borderWidth: 1,
+        },
+      },
+      scales: {
+        x: {
+          title: {
+            display: true,
+            text: "Droplet Diameter Bin (pixels)",
+            color: "#0f172a",
+            font: { weight: "500" },
+          },
+          ticks: { color: "#334155" },
+          grid: { color: "rgba(148, 163, 184, 0.18)" },
+        },
+        y: {
+          title: {
+            display: true,
+            text: comparisonHistMode === "pct" ? "Relative Frequency (%)" : "Droplet Count",
+            color: "#0f172a",
+            font: { weight: "500" },
+          },
+          ticks: { color: "#334155" },
+          grid: { color: "rgba(148, 163, 184, 0.25)" },
+        },
+      },
+    }),
+    [comparisonHistMode]
+  );
+
+  const comparisonHistogramData = useMemo(() => {
+    if (!comparisonResult?.bin_edges?.length) return null;
+    const labels = comparisonResult.bin_edges
+      .slice(0, -1)
+      .map((edge, idx) => `${edge.toFixed(1)}–${comparisonResult.bin_edges[idx + 1].toFixed(1)}`);
+
+    return {
+      labels,
+      datasets: [
+        {
+          label: "Actual Microscopic Image",
+          data:
+            comparisonHistMode === "pct"
+              ? comparisonResult.actual_hist_pct
+              : comparisonResult.actual_hist_counts,
+          backgroundColor: "rgba(37, 99, 235, 0.8)",
+          borderColor: "rgba(29, 78, 216, 1)",
+          borderWidth: 1,
+          borderRadius: 4,
+        },
+        {
+          label: "ML Predicted Image",
+          data:
+            comparisonHistMode === "pct"
+              ? comparisonResult.predicted_hist_pct
+              : comparisonResult.predicted_hist_counts,
+          backgroundColor: "rgba(5, 150, 105, 0.8)",
+          borderColor: "rgba(4, 120, 87, 1)",
+          borderWidth: 1,
+          borderRadius: 4,
+        },
+      ],
+    };
+  }, [comparisonResult, comparisonHistMode]);
+
+  const onActualFileSelected = (nextFile) => {
+    if (!nextFile) return;
+    if (!nextFile.type.startsWith("image/")) {
+      setComparisonError("Please upload a valid image file for the Actual Microscopic Image.");
+      return;
+    }
+    setComparisonError("");
+    setActualFile(nextFile);
+  };
+
+  const onPredictedFileSelected = (nextFile) => {
+    if (!nextFile) return;
+    if (!nextFile.type.startsWith("image/")) {
+      setComparisonError("Please upload a valid image file for the ML Predicted Image.");
+      return;
+    }
+    setComparisonError("");
+    setPredictedFile(nextFile);
+  };
+
+  const handleCompareImages = async () => {
+    if (!actualFile || !predictedFile) {
+      setComparisonError(
+        "Please select both the Actual Microscopic Image and the ML Predicted Image before comparing."
+      );
+      return;
+    }
+
+    setLoadingComparison(true);
+    setComparisonError("");
+
+    const formData = new FormData();
+    formData.append("actual_file", actualFile);
+    formData.append("predicted_file", predictedFile);
+    formData.append("invert_actual", String(invertActual));
+    formData.append("invert_predicted", String(invertPredicted));
+
+    try {
+      const res = await axios.post(`${API_URL}/compare-images`, formData);
+      setComparisonResult(res.data);
+    } catch (err) {
+      const detail = err?.response?.data?.detail;
+      setComparisonError(
+        detail || "Image comparison could not be completed. Please try again."
+      );
+    } finally {
+      setLoadingComparison(false);
+    }
+  };
+
+  const handleResetComparison = () => {
+    setActualFile(null);
+    setPredictedFile(null);
+    setInvertActual(false);
+    setInvertPredicted(false);
+    setComparisonResult(null);
+    setComparisonError("");
+    setComparisonViewMode("gray");
+  };
+
+  const base64ToPngFile = (b64, filename) => {
+    const byteString = atob(b64);
+    const ab = new ArrayBuffer(byteString.length);
+    const ia = new Uint8Array(ab);
+    for (let i = 0; i < byteString.length; i += 1) {
+      ia[i] = byteString.charCodeAt(i);
+    }
+    return new File([ab], filename, { type: "image/png" });
+  };
+
+  const handleApplyMlPreset = (rpmVal, mixVal, phVal = "7.0") => {
+    setMlRpm(String(rpmVal));
+    setMlMixingTime(String(mixVal));
+    setMlPh(String(phVal));
+    setMlGenError("");
+  };
+
+  const handleGenerateMlImage = async () => {
+    const rpmNum = Number.parseFloat(mlRpm);
+    const mixNum = Number.parseFloat(mlMixingTime);
+    const phNum = Number.parseFloat(mlPh);
+    const scaleNum = Number.parseFloat(mlScaleUmPerPx);
+
+    if (Number.isNaN(rpmNum) || rpmNum <= 0) {
+      setMlGenError("Homogenizer RPM must be greater than 0.");
+      return;
+    }
+    if (Number.isNaN(mixNum) || mixNum <= 0) {
+      setMlGenError("Mixing time must be greater than 0.");
+      return;
+    }
+    if (Number.isNaN(phNum) || phNum < 0 || phNum > 14) {
+      setMlGenError("pH must be between 0 and 14.");
+      return;
+    }
+    if (Number.isNaN(scaleNum) || scaleNum <= 0) {
+      setMlGenError("Scale (µm/pixel) must be greater than 0.");
+      return;
+    }
+
+    setLoadingMlGen(true);
+    setMlGenError("");
+
+    try {
+      const res = await axios.post(`${API_URL}/generate-ml-image`, {
+        rpm: rpmNum,
+        mixing_time: mixNum,
+        ph: phNum,
+        scale_um_per_px: scaleNum,
+      });
+      setMlGeneratedData(res.data);
+    } catch (err) {
+      const detail = err?.response?.data?.detail;
+      setMlGenError(
+        detail || "Could not generate the predicted microscopic image. Please try again."
+      );
+    } finally {
+      setLoadingMlGen(false);
+    }
+  };
+
+  const handleUseGeneratedMlFile = () => {
+    if (!mlGeneratedData?.predicted_image) return;
+    const fileObj = base64ToPngFile(
+      mlGeneratedData.predicted_image,
+      mlGeneratedData.saved_filename || "expected_microscopic_image.png"
+    );
+    setPredictedFile(fileObj);
+    setInvertPredicted(false);
+    setComparisonError("");
+  };
+
+  const handleDownloadComparisonImage = () => {
+    if (!comparisonResult) return;
+    const imgActual = new Image();
+    const imgPred = new Image();
+    const srcActual =
+      comparisonViewMode === "binary"
+        ? comparisonResult.actual_binary_image
+        : comparisonResult.actual_image;
+    const srcPred =
+      comparisonViewMode === "binary"
+        ? comparisonResult.predicted_binary_image
+        : comparisonResult.predicted_image;
+
+    let loaded = 0;
+    const onBothLoaded = () => {
+      loaded += 1;
+      if (loaded < 2) return;
+
+      const pad = 40;
+      const titleHeight = 52;
+      const targetH = 420;
+      const w1 = Math.round((imgActual.width / imgActual.height) * targetH) || 420;
+      const w2 = Math.round((imgPred.width / imgPred.height) * targetH) || 420;
+
+      const canvas = document.createElement("canvas");
+      canvas.width = pad * 3 + w1 + w2;
+      canvas.height = pad * 2 + titleHeight + targetH;
+      const ctx = canvas.getContext("2d");
+
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      ctx.fillStyle = "#0f172a";
+      ctx.font = "bold 20px Verdana, Geneva, Tahoma, sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText("Actual Microscopic Image", pad + w1 / 2, pad + 28);
+      ctx.fillText("ML Predicted Image", pad * 2 + w1 + w2 / 2, pad + 28);
+
+      ctx.drawImage(imgActual, pad, pad + titleHeight, w1, targetH);
+      ctx.drawImage(imgPred, pad * 2 + w1, pad + titleHeight, w2, targetH);
+
+      const link = document.createElement("a");
+      link.download = "image_comparison.png";
+      link.href = canvas.toDataURL("image/png");
+      link.click();
+    };
+
+    imgActual.onload = onBothLoaded;
+    imgPred.onload = onBothLoaded;
+    imgActual.src = `data:image/png;base64,${srcActual}`;
+    imgPred.src = `data:image/png;base64,${srcPred}`;
+  };
+
   const onFileSelected = (nextFile) => {
     if (!nextFile) return;
     if (!nextFile.type.startsWith("image/")) {
@@ -703,10 +993,10 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-200 text-slate-900">
+    <div className="min-h-screen bg-slate-300 text-slate-900">
       <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
-        <header className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-          <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+        <header className="rounded-2xl border border-slate-300 bg-white p-6 shadow-sm">
+          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
             <div>
               <p className="text-sm font-semibold uppercase tracking-[0.16em] text-slate-600">
                 CV + Experimental Insights
@@ -715,12 +1005,31 @@ export default function App() {
                 Microbubble Analysis Dashboard
               </h1>
             </div>
+            <nav className="flex flex-wrap gap-2">
+              <a
+                href="#single-cv"
+                className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-100"
+              >
+                Single Image CV
+              </a>
+              <a
+                href="#image-comparison"
+                className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-indigo-700 transition hover:bg-indigo-100"
+              >
+                Actual vs. Predicted ML
+              </a>
+              <a
+                href="#stability-modeling"
+                className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-100"
+              >
+                Stability Modeling
+              </a>
+            </nav>
           </div>
         </header>
 
         <main className="mt-8 grid grid-cols-1 gap-6 xl:grid-cols-2">
-          {/* Top Section 1: Upload & Parameters */}
-          <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <section id="single-cv" className="rounded-2xl border border-slate-200 bg-slate-200 p-6 shadow-sm">
             <h2 className="text-lg font-semibold text-slate-900">Upload Micrographic Image</h2>
 
             <label
@@ -817,7 +1126,7 @@ export default function App() {
             </div>
 
             {result && (
-              <div className="mt-5 rounded-xl border border-slate-200 bg-slate-50 p-4">
+              <div className="mt-5 rounded-xl border border-slate-200 bg-slate-100 p-4">
                 <h3 className="text-sm font-semibold uppercase tracking-[0.16em] text-slate-600">Quick Metrics</h3>
                 <div className="mt-3 space-y-3 text-md">
                   <div className="flex items-center justify-between rounded-lg bg-white px-3 py-2 border border-slate-200">
@@ -842,7 +1151,7 @@ export default function App() {
           </section>
 
           {/* Top Section 2: Processed Image */}
-          <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <section className="rounded-2xl border border-slate-200 bg-slate-200 p-5 shadow-sm">
             <h2 className="text-lg font-semibold text-slate-900">Processed Image</h2>
             {result ? (
               <img
@@ -858,7 +1167,7 @@ export default function App() {
           </section>
 
           {/* Bubble Size Distribution */}
-          <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <section className="rounded-2xl border border-slate-200 bg-slate-100 p-5 shadow-sm">
             <h2 className="text-xl font-semibold text-slate-900">Bubble Size Distribution</h2>
             <div className="mt-4 h-110">
               {result ? (
@@ -890,7 +1199,7 @@ export default function App() {
           </section>
 
           {/* Bubble Diameters */}
-          <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <section className="rounded-2xl border border-slate-200 bg-slate-100 p-5 shadow-sm">
             <h2 className="text-xl font-semibold text-slate-900">Bubble Diameters</h2>
             <div className="mt-4 h-110">
               {result ? (
@@ -917,8 +1226,528 @@ export default function App() {
             </div>
           </section>
 
+          {/* Actual vs. Predicted Microscopic Image Comparison */}
+          <section
+            id="image-comparison"
+            className="rounded-2xl border border-slate-200 bg-slate-100 p-6 shadow-sm col-span-1 xl:col-span-2"
+          >
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between border-b border-slate-200 pb-4">
+              <div>
+                <h2 className="text-2xl font-bold text-slate-900">
+                  Actual vs. Predicted Microscopic Image Comparison
+                </h2>
+                <p className="text-xs text-slate-500">
+                  Compare experimental micrographs with ML-predicted micrographs using Polydispersity Index (PDI) and mean droplet diameter
+                </p>
+              </div>
+              {(actualFile || predictedFile || comparisonResult) && (
+                <button
+                  type="button"
+                  onClick={handleResetComparison}
+                  className="self-start sm:self-auto rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:bg-slate-50 cursor-pointer"
+                >
+                  Reset Comparison
+                </button>
+              )}
+            </div>
+
+            {/* Step A: Generate ML Microscopic Image from Parameters */}
+            <div className="mt-5 rounded-xl border border-indigo-200 bg-indigo-50/40 p-4">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-indigo-700">
+                    ML Micrograph Predictor
+                  </span>
+                  <h3 className="text-base font-bold text-slate-900">
+                    Generate Predicted Microscopic Image from Experimental Parameters
+                  </h3>
+                  <p className="text-xs text-slate-600">
+                    Enter homogenization speed, mixing time, and pH to predict droplet morphology and generate a synthetic micrograph automatically.
+                  </p>
+                </div>
+              </div>
+
+              {/* Lab Reference Quick Presets */}
+              <div className="mt-3 flex flex-wrap items-center gap-1.5 text-xs">
+                <span className="font-semibold text-slate-600 mr-1">Experimental Presets:</span>
+                {[
+                  { label: "5000 RPM", rpm: 5000, mix: 1.5 },
+                  { label: "10000 RPM", rpm: 10000, mix: 1.5 },
+                  { label: "20000 RPM", rpm: 20000, mix: 1.5 },
+                  { label: "25000 RPM", rpm: 25000, mix: 1.5 },
+                  { label: "1 min Mixing", rpm: 20000, mix: 1.0 },
+                  { label: "2 min Mixing", rpm: 20000, mix: 2.0 },
+                  { label: "3 min Mixing", rpm: 20000, mix: 3.0 },
+                  { label: "4 min Mixing", rpm: 20000, mix: 4.0 },
+                ].map((preset) => (
+                  <button
+                    key={preset.label}
+                    type="button"
+                    onClick={() => handleApplyMlPreset(preset.rpm, preset.mix, "7.0")}
+                    className="rounded-md border border-slate-300 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-700 transition hover:border-indigo-400 hover:text-indigo-700 cursor-pointer"
+                  >
+                    {preset.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Parameter Inputs */}
+              <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
+                <label className="text-xs font-medium text-slate-700">
+                  Homogenizer Speed (RPM)
+                  <input
+                    type="number"
+                    min="500"
+                    step="500"
+                    value={mlRpm}
+                    onChange={(e) => setMlRpm(e.target.value)}
+                    className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-indigo-500"
+                  />
+                </label>
+
+                <label className="text-xs font-medium text-slate-700">
+                  Mixing Time (min)
+                  <input
+                    type="number"
+                    min="0.2"
+                    step="0.5"
+                    value={mlMixingTime}
+                    onChange={(e) => setMlMixingTime(e.target.value)}
+                    className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-indigo-500"
+                  />
+                </label>
+
+                <label className="text-xs font-medium text-slate-700">
+                  Emulsion pH (0–14)
+                  <input
+                    type="number"
+                    min="0"
+                    max="14"
+                    step="0.5"
+                    value={mlPh}
+                    onChange={(e) => setMlPh(e.target.value)}
+                    className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-indigo-500"
+                  />
+                </label>
+
+                <label className="text-xs font-medium text-slate-700">
+                  Scale (µm / pixel)
+                  <input
+                    type="number"
+                    min="0.01"
+                    step="0.05"
+                    value={mlScaleUmPerPx}
+                    onChange={(e) => setMlScaleUmPerPx(e.target.value)}
+                    className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-indigo-500"
+                  />
+                </label>
+
+                <div className="flex items-end">
+                  <button
+                    type="button"
+                    onClick={handleGenerateMlImage}
+                    disabled={loadingMlGen}
+                    className="w-full cursor-pointer rounded-lg bg-emerald-600 px-4 py-2 text-xs font-semibold text-white shadow-xs transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60 h-9.5"
+                  >
+                    {loadingMlGen ? "Generating..." : "Generate ML Image"}
+                  </button>
+                </div>
+              </div>
+
+              {mlGenError && (
+                <div className="mt-3 rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700">
+                  {mlGenError}
+                </div>
+              )}
+
+              {mlGeneratedData && (
+                <div className="mt-4 rounded-xl border border-emerald-200 bg-white p-3.5 flex flex-col md:flex-row md:items-center gap-4">
+                  <img
+                    src={`data:image/png;base64,${mlGeneratedData.predicted_image}`}
+                    alt="Generated ML Micrograph"
+                    className="h-28 w-40 rounded-lg border border-slate-200 object-cover shrink-0 bg-black"
+                  />
+                  <div className="flex-1 space-y-1.5 text-xs">
+                    <span className="inline-block rounded-md bg-emerald-100 px-2 py-0.5 font-semibold text-emerald-800">
+                      Predicted Micrograph Ready
+                    </span>
+                    <p className="text-slate-700">
+                      Predicted Average Diameter:{" "}
+                      <strong className="text-slate-900">
+                        {mlGeneratedData.predicted_mean_um} ± {mlGeneratedData.predicted_std_um} µm
+                      </strong>{" "}
+                      ({mlGeneratedData.extracted_mean_px} px)
+                    </p>
+                    <p className="text-slate-700">
+                      Predicted Polydispersity Index (PDI):{" "}
+                      <strong className="text-slate-900">{mlGeneratedData.extracted_pdi}</strong>
+                    </p>
+                  </div>
+                  <div className="shrink-0">
+                    <button
+                      type="button"
+                      onClick={handleUseGeneratedMlFile}
+                      className="rounded-lg border border-emerald-300 bg-emerald-50 px-3.5 py-2 text-xs font-semibold text-emerald-800 transition hover:bg-emerald-100 cursor-pointer"
+                    >
+                      Select for Comparison
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Dual Upload Dropzones */}
+            <div className="mt-5 grid grid-cols-1 gap-5 md:grid-cols-2">
+              {/* Actual Image Input */}
+              <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-semibold text-slate-900">
+                    1. Actual Microscopic Image
+                  </h3>
+                  <span className="rounded-md bg-blue-100 px-2 py-0.5 text-[11px] font-semibold text-blue-800">
+                    Experimental
+                  </span>
+                </div>
+
+                <label
+                  className={`mt-3 block cursor-pointer rounded-xl border-2 border-dashed p-5 text-center transition ${
+                    actualDragActive
+                      ? "border-blue-500 bg-blue-50/60"
+                      : "border-slate-300 bg-white hover:border-slate-400"
+                  }`}
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    setActualDragActive(true);
+                  }}
+                  onDragLeave={() => setActualDragActive(false)}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    setActualDragActive(false);
+                    onActualFileSelected(e.dataTransfer.files?.[0]);
+                  }}
+                >
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={(e) => onActualFileSelected(e.target.files?.[0])}
+                  />
+                  <p className="text-sm font-semibold text-slate-800">
+                    {actualFile ? "Actual Microscopic Image Selected" : "Upload Actual Microscopic Image"}
+                  </p>
+                  <p className="mt-1 text-xs text-slate-500">
+                    {actualFile ? "Click or drop to change image" : "Drag and drop or click to browse"}
+                  </p>
+                </label>
+
+                <label className="mt-3 flex items-center gap-2 text-xs text-slate-700 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={invertActual}
+                    onChange={(e) => setInvertActual(e.target.checked)}
+                    className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                  />
+                  <span>Dark droplets on a bright background</span>
+                </label>
+              </div>
+
+              {/* Predicted Image Input */}
+              <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-semibold text-slate-900">
+                    2. ML Predicted Image
+                  </h3>
+                  <span className="rounded-md bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-800">
+                    Predicted
+                  </span>
+                </div>
+
+                <label
+                  className={`mt-3 block cursor-pointer rounded-xl border-2 border-dashed p-5 text-center transition ${
+                    predictedDragActive
+                      ? "border-emerald-500 bg-emerald-50/60"
+                      : "border-slate-300 bg-white hover:border-slate-400"
+                  }`}
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    setPredictedDragActive(true);
+                  }}
+                  onDragLeave={() => setPredictedDragActive(false)}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    setPredictedDragActive(false);
+                    onPredictedFileSelected(e.dataTransfer.files?.[0]);
+                  }}
+                >
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={(e) => onPredictedFileSelected(e.target.files?.[0])}
+                  />
+                  <p className="text-sm font-semibold text-slate-800">
+                    {predictedFile ? "ML Predicted Image Selected" : "Upload ML Predicted Image"}
+                  </p>
+                  <p className="mt-1 text-xs text-slate-500">
+                    {predictedFile ? "Click or drop to change image" : "Drag and drop or click to browse"}
+                  </p>
+                </label>
+
+                <label className="mt-3 flex items-center gap-2 text-xs text-slate-700 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={invertPredicted}
+                    onChange={(e) => setInvertPredicted(e.target.checked)}
+                    className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                  />
+                  <span>Dark droplets on a bright background</span>
+                </label>
+              </div>
+            </div>
+
+            {comparisonError && (
+              <div className="mt-4 rounded-lg border border-rose-300 bg-rose-50 px-4 py-2.5 text-xs font-medium text-rose-700">
+                {comparisonError}
+              </div>
+            )}
+
+            <div className="mt-4 flex justify-end">
+              <button
+                type="button"
+                onClick={handleCompareImages}
+                disabled={loadingComparison}
+                className="w-full sm:w-auto cursor-pointer rounded-lg bg-indigo-600 px-6 py-2.5 text-sm font-semibold text-white shadow-xs transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {loadingComparison
+                  ? "Comparing Images..."
+                  : "Compare Actual vs. Predicted Images"}
+              </button>
+            </div>
+
+            {/* Comparison Results */}
+            {comparisonResult && (
+              <div className="mt-6 space-y-6 border-t border-slate-200 pt-6">
+                {/* 6 Core Metrics */}
+                <div>
+                  <h3 className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
+                    Morphological &amp; Statistical Comparison
+                  </h3>
+                  <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+                      <span className="text-xs font-medium text-slate-500">
+                        Actual Polydispersity Index (PDI)
+                      </span>
+                      <p className="mt-1 text-xl font-bold font-mono text-slate-900">
+                        {comparisonResult.actual_pdi !== null
+                          ? comparisonResult.actual_pdi.toFixed(4)
+                          : "N/A"}
+                      </p>
+                      <span className="text-[11px] text-slate-500">
+                        Droplet size uniformity ({comparisonResult.actual_count} droplets)
+                      </span>
+                    </div>
+
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+                      <span className="text-xs font-medium text-slate-500">
+                        Predicted Polydispersity Index (PDI)
+                      </span>
+                      <p className="mt-1 text-xl font-bold font-mono text-slate-900">
+                        {comparisonResult.predicted_pdi !== null
+                          ? comparisonResult.predicted_pdi.toFixed(4)
+                          : "N/A"}
+                      </p>
+                      <span className="text-[11px] text-slate-500">
+                        Droplet size uniformity ({comparisonResult.predicted_count} droplets)
+                      </span>
+                    </div>
+
+                    <div className="rounded-xl border border-indigo-200 bg-indigo-50/60 px-4 py-3">
+                      <span className="text-xs font-semibold text-indigo-700">
+                        Polydispersity Index (PDI) Difference
+                      </span>
+                      <p className="mt-1 text-xl font-bold font-mono text-indigo-950">
+                        {comparisonResult.pdi_difference !== null
+                          ? comparisonResult.pdi_difference.toFixed(4)
+                          : "N/A"}
+                      </p>
+                      <span className="text-[11px] text-indigo-700/80">
+                        Absolute difference in size uniformity
+                      </span>
+                    </div>
+
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+                      <span className="text-xs font-medium text-slate-500">
+                        Actual Mean Diameter
+                      </span>
+                      <p className="mt-1 text-xl font-bold font-mono text-slate-900">
+                        {comparisonResult.actual_mean.toFixed(2)} px
+                      </p>
+                      <span className="text-[11px] text-slate-500">
+                        Standard Deviation: ±{comparisonResult.actual_std.toFixed(2)} px
+                      </span>
+                    </div>
+
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+                      <span className="text-xs font-medium text-slate-500">
+                        Predicted Mean Diameter
+                      </span>
+                      <p className="mt-1 text-xl font-bold font-mono text-slate-900">
+                        {comparisonResult.predicted_mean.toFixed(2)} px
+                      </p>
+                      <span className="text-[11px] text-slate-500">
+                        Standard Deviation: ±{comparisonResult.predicted_std.toFixed(2)} px
+                      </span>
+                    </div>
+
+                    <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 px-4 py-3">
+                      <span className="text-xs font-semibold text-emerald-800">
+                        Mean Diameter Difference
+                      </span>
+                      <p className="mt-1 text-xl font-bold font-mono text-emerald-950">
+                        {comparisonResult.mean_difference.toFixed(2)} px
+                      </p>
+                      <span className="text-[11px] text-emerald-800/80">
+                        Absolute difference in average droplet diameter
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Side-by-Side Image View */}
+                <div className="rounded-xl border border-slate-200 bg-slate-100 p-5 shadow-xs">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <h3 className="text-lg font-semibold text-slate-900">
+                        Side-by-Side Visual Comparison
+                      </h3>
+                      <p className="text-xs text-slate-500">
+                        Visual comparison of experimental and ML-predicted micrographs
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <div className="inline-flex rounded-lg border border-slate-200 bg-slate-100 p-1">
+                        <button
+                          type="button"
+                          onClick={() => setComparisonViewMode("gray")}
+                          className={`px-3 py-1 text-xs font-medium rounded-md transition cursor-pointer ${
+                            comparisonViewMode === "gray"
+                              ? "bg-white text-indigo-700 shadow-xs font-semibold"
+                              : "text-slate-600 hover:text-slate-900"
+                          }`}
+                        >
+                          Micrograph View
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setComparisonViewMode("binary")}
+                          className={`px-3 py-1 text-xs font-medium rounded-md transition cursor-pointer ${
+                            comparisonViewMode === "binary"
+                              ? "bg-white text-indigo-700 shadow-xs font-semibold"
+                              : "text-slate-600 hover:text-slate-900"
+                          }`}
+                        >
+                          Detected Droplets
+                        </button>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={handleDownloadComparisonImage}
+                        className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 cursor-pointer"
+                      >
+                        Download Comparison Image
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 grid grid-cols-1 gap-5 md:grid-cols-2">
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-center">
+                      <h4 className="text-sm font-semibold text-slate-800 mb-2">
+                        Actual Microscopic Image
+                      </h4>
+                      <img
+                        src={`data:image/png;base64,${
+                          comparisonViewMode === "binary"
+                            ? comparisonResult.actual_binary_image
+                            : comparisonResult.actual_image
+                        }`}
+                        alt="Actual Microscopic Image"
+                        className="mx-auto max-h-88 w-full rounded-lg object-contain bg-black/5"
+                      />
+                    </div>
+
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-center">
+                      <h4 className="text-sm font-semibold text-slate-800 mb-2">
+                        ML Predicted Image
+                      </h4>
+                      <img
+                        src={`data:image/png;base64,${
+                          comparisonViewMode === "binary"
+                            ? comparisonResult.predicted_binary_image
+                            : comparisonResult.predicted_image
+                        }`}
+                        alt="ML Predicted Image"
+                        className="mx-auto max-h-88 w-full rounded-lg object-contain bg-black/5"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Droplet Size Distribution Overlay Chart */}
+                <div className="rounded-xl border border-slate-200 bg-slate-100 p-5 shadow-xs">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <h3 className="text-lg font-semibold text-slate-900">
+                        Droplet Size Distribution Comparison
+                      </h3>
+                      <p className="text-xs text-slate-500">
+                        Visual comparison of actual vs. predicted droplet diameter distributions (pixels)
+                      </p>
+                    </div>
+                    <div className="inline-flex rounded-lg border border-slate-200 bg-slate-100 p-1 self-start sm:self-auto">
+                      <button
+                        type="button"
+                        onClick={() => setComparisonHistMode("pct")}
+                        className={`px-3 py-1 text-xs font-medium rounded-md transition cursor-pointer ${
+                          comparisonHistMode === "pct"
+                            ? "bg-white text-indigo-700 shadow-xs font-semibold"
+                            : "text-slate-600 hover:text-slate-900"
+                        }`}
+                      >
+                        Relative %
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setComparisonHistMode("count")}
+                        className={`px-3 py-1 text-xs font-medium rounded-md transition cursor-pointer ${
+                          comparisonHistMode === "count"
+                            ? "bg-white text-indigo-700 shadow-xs font-semibold"
+                            : "text-slate-600 hover:text-slate-900"
+                        }`}
+                      >
+                        Droplet Count
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 h-80">
+                    {comparisonHistogramData && (
+                      <Bar
+                        data={comparisonHistogramData}
+                        options={comparisonHistogramOptions}
+                      />
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+          </section>
+
           {/* Comprehensive Stability Section with Tabs */}
-          <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm col-span-1 xl:col-span-2">
+          <section
+            id="stability-modeling"
+            className="rounded-2xl border border-slate-400 bg-slate-100 p-6 shadow-sm col-span-1 xl:col-span-2"
+          >
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-b border-slate-200 pb-4">
               <div>
                 <h2 className="text-2xl font-bold text-slate-900">Emulsion Stability Analysis & Modeling</h2>
@@ -928,7 +1757,7 @@ export default function App() {
               </div>
 
               {/* Tab Selector */}
-              <div className="inline-flex rounded-xl border border-slate-200 bg-slate-100 p-1">
+              <div className="inline-flex rounded-xl border border-slate-200 bg-slate-200 p-1">
                 <button
                   type="button"
                   onClick={() => setStabilityMode("multi")}
@@ -958,7 +1787,7 @@ export default function App() {
             {stabilityMode === "multi" && (
               <div className="mt-5 space-y-6">
                 {/* Control bar: Presets & Parameter definition */}
-                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                <div className="rounded-xl border border-slate-200 bg-slate-100 p-4">
                   <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
                     <div>
                       <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">

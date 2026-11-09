@@ -3,6 +3,8 @@ import cv2
 import numpy as np
 import tempfile
 import base64
+import os
+from sklearn.ensemble import GradientBoostingRegressor
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -432,8 +434,418 @@ async def stability_multi_parameter(req: MultiParameterRequest):
         "total_conditions": len(series_results),
     }
 
+# ---------------------------------------------------------------------------
+# 10. ML PREDICTED MICROSCOPIC IMAGE GENERATOR
+# ---------------------------------------------------------------------------
+def _build_ml_droplet_models():
+    """Train GradientBoostingRegressor models on lab experimental RPM, Mixing Time, and pH data."""
+    rpm_anchors = np.array([5000.0, 10000.0, 20000.0, 25000.0])
+    dia_rpm_anchors = np.array([65.48, 33.06, 24.38, 23.53])
+    std_rpm_anchors = np.array([14.69, 8.32, 11.49, 14.42])
+
+    mix_anchors = np.array([1.0, 2.0, 3.0, 4.0])
+    dia_mix_anchors = np.array([28.42, 20.53, 22.96, 22.91])
+    std_mix_anchors = np.array([12.30, 8.14, 7.59, 10.55])
+
+    X_rows = []
+    y_mean = []
+    y_std = []
+    weights = []
+
+    # Direct lab anchor observations from RPM_variation.png and mixing_time_variation.png
+    for r_val, d_val, s_val in zip(rpm_anchors, dia_rpm_anchors, std_rpm_anchors):
+        X_rows.append([r_val, 1.5, 7.0])
+        y_mean.append(d_val)
+        y_std.append(s_val)
+        weights.append(12.0)
+
+    for m_val, d_val, s_val in zip(mix_anchors, dia_mix_anchors, std_mix_anchors):
+        X_rows.append([20000.0, m_val, 7.0])
+        y_mean.append(d_val)
+        y_std.append(s_val)
+        weights.append(12.0)
+
+    # Structured cross-parameter grid across RPM, Mixing Time, and pH
+    rpm_grid = [3000.0, 5000.0, 7500.0, 10000.0, 15000.0, 20000.0, 25000.0]
+    mix_grid = [0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0]
+    ph_grid = [1.5, 3.0, 5.0, 6.5, 7.0, 9.0, 11.5]
+
+    for r_val in rpm_grid:
+        r_clamped = float(np.clip(r_val, rpm_anchors[0], rpm_anchors[-1]))
+        base_d = float(np.exp(np.interp(np.log(r_clamped), np.log(rpm_anchors), np.log(dia_rpm_anchors))))
+        if r_val < rpm_anchors[0]:
+            base_d *= (rpm_anchors[0] / max(r_val, 1000.0)) ** 0.45
+        base_s = float(np.interp(r_clamped, rpm_anchors, std_rpm_anchors))
+
+        for m_val in mix_grid:
+            m_clamped = float(np.clip(m_val, mix_anchors[0], mix_anchors[-1]))
+            mix_d_ratio = float(np.interp(m_clamped, mix_anchors, dia_mix_anchors)) / 24.475
+            mix_s_ratio = float(np.interp(m_clamped, mix_anchors, std_mix_anchors)) / 10.22
+
+            for ph_val in ph_grid:
+                h1_i, h2_i = interpolated_heights(ph_val)
+                retention = np.clip(h2_i / max(h1_i, 1e-6), 0.5, 1.0)
+                coalescence_factor = 1.0 + 0.72 * (1.0 - retention)
+                pdi_ph_boost = 1.0 + 0.90 * (1.0 - retention)
+
+                d_est = float(np.clip(base_d * mix_d_ratio * coalescence_factor, 12.0, 120.0))
+                s_est = float(np.clip(base_s * mix_s_ratio * pdi_ph_boost, 2.5, 55.0))
+
+                X_rows.append([r_val, m_val, ph_val])
+                y_mean.append(d_est)
+                y_std.append(s_est)
+                weights.append(1.0)
+
+    X_arr = np.array(X_rows, dtype=np.float64)
+    y_mean_arr = np.array(y_mean, dtype=np.float64)
+    y_std_arr = np.array(y_std, dtype=np.float64)
+    w_arr = np.array(weights, dtype=np.float64)
+
+    mean_model = GradientBoostingRegressor(
+        n_estimators=180, learning_rate=0.06, max_depth=4, random_state=42
+    )
+    std_model = GradientBoostingRegressor(
+        n_estimators=180, learning_rate=0.06, max_depth=4, random_state=42
+    )
+    mean_model.fit(X_arr, y_mean_arr, sample_weight=w_arr)
+    std_model.fit(X_arr, y_std_arr, sample_weight=w_arr)
+    return mean_model, std_model
+
+
+ML_MEAN_MODEL, ML_STD_MODEL = _build_ml_droplet_models()
+
+
+def render_synthetic_micrograph(
+    target_mean_px: float,
+    target_pdi: float,
+    rpm: float = 10000.0,
+    mixing_time: float = 2.0,
+    ph: float = 7.0,
+    width: int = 1265,
+    height: int = 902,
+    seed: int = 42,
+) -> tuple[np.ndarray, str, str]:
+    """Generate a synthetic grayscale micrograph with bright droplets and save it automatically to project folders."""
+    width = int(np.clip(width, 320, 1600))
+    height = int(np.clip(height, 240, 1200))
+    mean_px = float(np.clip(target_mean_px, 8.0, min(width, height) * 0.25))
+    pdi = float(np.clip(target_pdi, 0.005, 1.2))
+
+    rng = np.random.default_rng(int(seed))
+
+    # Choose droplet count so total area stays packable (~32% coverage) without merging droplets
+    approx_single_area = np.pi * ((mean_px / 2.0) ** 2) * (1.0 + min(pdi, 0.6))
+    n_droplets = int(np.clip((0.32 * width * height) / max(approx_single_area, 1.0), 24, 240))
+
+    # Calibrate finite-sample log-normal draws to match both target_mean_px and target_pdi
+    z = rng.standard_normal(n_droplets)
+    z = (z - np.mean(z)) / max(float(np.std(z)), 1e-6)
+    sigma_ln = float(np.sqrt(np.log(1.0 + pdi)))
+    for _ in range(8):
+        raw = np.exp(sigma_ln * z)
+        dias = np.clip(raw * (mean_px / np.mean(raw)), 5.0, min(width, height) * 0.34)
+        cur_pdi = float((np.std(dias) / np.mean(dias)) ** 2)
+        if cur_pdi > 1e-6:
+            sigma_ln *= float(np.sqrt(pdi / cur_pdi))
+            sigma_ln = float(np.clip(sigma_ln, 0.03, 1.35))
+
+    raw = np.exp(sigma_ln * z)
+    dias = np.clip(raw * (mean_px / np.mean(raw)), 5.0, min(width, height) * 0.34)
+    dias = dias * (mean_px / np.mean(dias))
+    dias_sorted = np.sort(dias)[::-1]
+
+    # Place largest droplets first so large droplets are never rejected disproportionately
+    placed = []
+    gap = 4.5
+    for d in dias_sorted:
+        r = float(d) / 2.0
+        margin = r + 4.0
+        if margin * 2 >= width or margin * 2 >= height:
+            continue
+        for _ in range(450):
+            cx = float(rng.uniform(margin, width - margin))
+            cy = float(rng.uniform(margin, height - margin))
+            collision = False
+            for px, py, pr in placed:
+                if (cx - px) ** 2 + (cy - py) ** 2 < (r + pr + gap) ** 2:
+                    collision = True
+                    break
+            if not collision:
+                placed.append((cx, cy, r))
+                break
+
+    # Dark microscopy background with subtle sensor noise
+    img = rng.normal(18.0, 2.0, (height, width)).clip(10, 26).astype(np.uint8)
+
+    # Render bright spherical droplets (intensity >= 148 inside r so Otsu cleanly recovers exact radius)
+    for cx, cy, r in placed:
+        x0 = max(0, int(np.floor(cx - r - 1)))
+        x1 = min(width, int(np.ceil(cx + r + 2)))
+        y0 = max(0, int(np.floor(cy - r - 1)))
+        y1 = min(height, int(np.ceil(cy + r + 2)))
+
+        yy, xx = np.ogrid[y0:y1, x0:x1]
+        dist_sq = (xx - cx) ** 2 + (yy - cy) ** 2
+        inside = dist_sq <= (r ** 2)
+
+        hl_sq = (xx - (cx - 0.18 * r)) ** 2 + (yy - (cy - 0.18 * r)) ** 2
+        norm_profile = np.sqrt(np.maximum(0.0, 1.0 - dist_sq / max(r ** 2, 1e-6)))
+        spec_boost = 14.0 * np.exp(-hl_sq / max(0.35 * (r ** 2), 1.0))
+        sphere_vals = np.clip(148.0 + 92.0 * norm_profile + spec_boost, 148.0, 252.0).astype(np.uint8)
+
+        patch = img[y0:y1, x0:x1]
+        patch[inside] = np.maximum(patch[inside], sphere_vals[inside])
+
+    # Automatically save to project root AND generated_ml_images/ folder
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    root_saved_path = os.path.join(project_root, "expected_microscopic_image.png")
+    cv2.imwrite(root_saved_path, img)
+
+    gen_dir = os.path.join(project_root, "generated_ml_images")
+    os.makedirs(gen_dir, exist_ok=True)
+    param_filename = f"ml_rpm{int(round(rpm))}_mix{mixing_time:g}min_ph{ph:g}.png"
+    folder_saved_path = os.path.join(gen_dir, param_filename)
+    cv2.imwrite(folder_saved_path, img)
+
+    return img, root_saved_path, folder_saved_path
+
+
+class GenerateMLImageRequest(BaseModel):
+    rpm: float = 10000.0
+    mixing_time: float = 2.0
+    ph: float = 7.0
+    scale_um_per_px: float = 0.5
+    width: int = 1265
+    height: int = 902
+    seed: int = 42
+
+
+@app.post("/generate-ml-image")
+async def generate_ml_image(req: GenerateMLImageRequest):
+    if req.scale_um_per_px <= 0:
+        raise HTTPException(status_code=400, detail="Scale (µm/pixel) must be greater than 0.")
+
+    features = np.array([[req.rpm, req.mixing_time, req.ph]], dtype=np.float64)
+    pred_mean_um = float(np.clip(ML_MEAN_MODEL.predict(features)[0], 8.0, 140.0))
+    pred_std_um = float(np.clip(ML_STD_MODEL.predict(features)[0], 2.0, 70.0))
+
+    target_mean_px = pred_mean_um / req.scale_um_per_px
+    target_std_px = pred_std_um / req.scale_um_per_px
+    target_pdi = float((target_std_px / max(target_mean_px, 1e-6)) ** 2)
+
+    img, root_saved_path, folder_saved_path = render_synthetic_micrograph(
+        target_mean_px=target_mean_px,
+        target_pdi=target_pdi,
+        rpm=req.rpm,
+        mixing_time=req.mixing_time,
+        ph=req.ph,
+        width=req.width,
+        height=req.height,
+        seed=req.seed,
+    )
+
+    _, buf = cv2.imencode(".png", img)
+    img_b64 = base64.b64encode(buf).decode("utf-8")
+
+    extracted_sizes = extract_diameters(root_saved_path, invert=False)
+    extracted_pdi = calculate_pdi(extracted_sizes)
+
+    return {
+        "rpm": req.rpm,
+        "mixing_time": req.mixing_time,
+        "ph": req.ph,
+        "scale_um_per_px": req.scale_um_per_px,
+        "predicted_mean_um": round(pred_mean_um, 2),
+        "predicted_std_um": round(pred_std_um, 2),
+        "target_mean_px": round(target_mean_px, 2),
+        "target_pdi": round(target_pdi, 4),
+        "extracted_count": int(len(extracted_sizes)),
+        "extracted_mean_px": round(float(np.mean(extracted_sizes)), 2) if len(extracted_sizes) else 0.0,
+        "extracted_pdi": round(float(extracted_pdi), 4) if not np.isnan(extracted_pdi) else None,
+        "saved_root_path": root_saved_path,
+        "saved_folder_path": folder_saved_path,
+        "saved_filename": os.path.basename(folder_saved_path),
+        "predicted_image": img_b64,
+    }
+
+
+# ---------------------------------------------------------------------------
+# ACTUAL VS PREDICTED IMAGE COMPARISON
+# ---------------------------------------------------------------------------
+def extract_diameters(image_path, invert=False):
+    img = cv2.imread(
+        image_path,
+        cv2.IMREAD_GRAYSCALE
+    )
+
+    if img is None:
+        raise ValueError("Image not found or invalid image format: " + image_path)
+
+    # Otsu thresholding
+    threshold_type = (
+        cv2.THRESH_BINARY_INV
+        if invert else cv2.THRESH_BINARY
+    )
+
+    _, binary = cv2.threshold(
+        img,
+        0,
+        255,
+        threshold_type + cv2.THRESH_OTSU
+    )
+
+    # Remove small noise
+    kernel = np.ones((3, 3), np.uint8)
+
+    binary = cv2.morphologyEx(
+        binary,
+        cv2.MORPH_OPEN,
+        kernel
+    )
+
+    count, labels, stats, centroids = (
+        cv2.connectedComponentsWithStats(binary)
+    )
+
+    diameters = []
+
+    for i in range(1, count):
+        area = stats[i, cv2.CC_STAT_AREA]
+        if area > 8:
+            diameter = np.sqrt(
+                4 * area / np.pi
+            )
+            diameters.append(diameter)
+
+    return np.array(diameters)
+
+
+def calculate_pdi(diameters):
+    if len(diameters) < 2:
+        return np.nan
+
+    return (
+        np.std(diameters) /
+        np.mean(diameters)
+    ) ** 2
+
+
+def encode_comparison_views(image_path, invert=False):
+    img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+    if img is None:
+        raise ValueError("Image not found or invalid image format: " + image_path)
+
+    threshold_type = cv2.THRESH_BINARY_INV if invert else cv2.THRESH_BINARY
+    _, binary = cv2.threshold(img, 0, 255, threshold_type + cv2.THRESH_OTSU)
+    kernel = np.ones((3, 3), np.uint8)
+    binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel)
+
+    _, gray_buf = cv2.imencode(".png", img)
+    _, bin_buf = cv2.imencode(".png", binary)
+    return (
+        base64.b64encode(gray_buf).decode("utf-8"),
+        base64.b64encode(bin_buf).decode("utf-8"),
+    )
+
+
+@app.post("/compare-images")
+async def compare_images(
+    actual_file: UploadFile = File(...),
+    predicted_file: UploadFile = File(...),
+    invert_actual: bool = Form(False),
+    invert_predicted: bool = Form(False),
+):
+    actual_temp_path = None
+    predicted_temp_path = None
+    try:
+        actual_ext = os.path.splitext(actual_file.filename or "")[1] or ".png"
+        predicted_ext = os.path.splitext(predicted_file.filename or "")[1] or ".png"
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=actual_ext) as actual_temp:
+            actual_temp.write(await actual_file.read())
+            actual_temp_path = actual_temp.name
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=predicted_ext) as predicted_temp:
+            predicted_temp.write(await predicted_file.read())
+            predicted_temp_path = predicted_temp.name
+
+        try:
+            actual_sizes = extract_diameters(actual_temp_path, invert=invert_actual)
+            predicted_sizes = extract_diameters(predicted_temp_path, invert=invert_predicted)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        if len(actual_sizes) == 0:
+            raise HTTPException(
+                status_code=400,
+                detail="No droplets were detected in the Actual Microscopic Image. Try enabling 'Dark droplets on a bright background'.",
+            )
+        if len(predicted_sizes) == 0:
+            raise HTTPException(
+                status_code=400,
+                detail="No droplets were detected in the ML Predicted Image. Try enabling 'Dark droplets on a bright background'.",
+            )
+
+        actual_pdi = calculate_pdi(actual_sizes)
+        predicted_pdi = calculate_pdi(predicted_sizes)
+
+        actual_mean = float(np.mean(actual_sizes))
+        predicted_mean = float(np.mean(predicted_sizes))
+
+        actual_pdi_val = None if np.isnan(actual_pdi) else float(actual_pdi)
+        predicted_pdi_val = None if np.isnan(predicted_pdi) else float(predicted_pdi)
+        pdi_diff_val = (
+            abs(actual_pdi_val - predicted_pdi_val)
+            if (actual_pdi_val is not None and predicted_pdi_val is not None)
+            else None
+        )
+
+        actual_gray_b64, actual_bin_b64 = encode_comparison_views(actual_temp_path, invert=invert_actual)
+        predicted_gray_b64, predicted_bin_b64 = encode_comparison_views(predicted_temp_path, invert=invert_predicted)
+
+        combined_sizes = np.concatenate([actual_sizes, predicted_sizes])
+        _, bin_edges = np.histogram(combined_sizes, bins=15)
+        actual_hist_counts, _ = np.histogram(actual_sizes, bins=bin_edges)
+        predicted_hist_counts, _ = np.histogram(predicted_sizes, bins=bin_edges)
+
+        actual_hist_pct = [
+            round(float(c) / len(actual_sizes) * 100.0, 2) for c in actual_hist_counts
+        ]
+        predicted_hist_pct = [
+            round(float(c) / len(predicted_sizes) * 100.0, 2) for c in predicted_hist_counts
+        ]
+
+        return {
+            "actual_pdi": actual_pdi_val,
+            "predicted_pdi": predicted_pdi_val,
+            "pdi_difference": pdi_diff_val,
+            "actual_mean": actual_mean,
+            "predicted_mean": predicted_mean,
+            "mean_difference": abs(actual_mean - predicted_mean),
+            "actual_std": float(np.std(actual_sizes)),
+            "predicted_std": float(np.std(predicted_sizes)),
+            "actual_count": int(len(actual_sizes)),
+            "predicted_count": int(len(predicted_sizes)),
+            "invert_actual": invert_actual,
+            "invert_predicted": invert_predicted,
+            "actual_image": actual_gray_b64,
+            "predicted_image": predicted_gray_b64,
+            "actual_binary_image": actual_bin_b64,
+            "predicted_binary_image": predicted_bin_b64,
+            "bin_edges": [float(b) for b in bin_edges],
+            "actual_hist_counts": actual_hist_counts.tolist(),
+            "predicted_hist_counts": predicted_hist_counts.tolist(),
+            "actual_hist_pct": actual_hist_pct,
+            "predicted_hist_pct": predicted_hist_pct,
+        }
+    finally:
+        if actual_temp_path and os.path.exists(actual_temp_path):
+            os.remove(actual_temp_path)
+        if predicted_temp_path and os.path.exists(predicted_temp_path):
+            os.remove(predicted_temp_path)
+
+
 import uvicorn
-import os
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
