@@ -42,31 +42,43 @@ This project unifies both scales into a single analytical platform:
 #### 1. Preprocessing & Otsu's Automatic Binarization
 An input BGR micrograph is converted to single-channel grayscale intensity $I(x, y) \in [0, 255]$ and smoothed with a $7 \times 7$ Gaussian filter (in the Watershed pipeline) to suppress high-frequency sensor noise:
 
-$$I_{\text{blur}}(x, y) = (I * G_{\sigma})(x, y)$$
+$$
+I_{\text{blur}}(x, y) = (I * G_{\sigma})(x, y)
+$$
 
 **Otsu's method** automatically selects the global intensity threshold $T^*$ that maximizes the between-class variance $\sigma_B^2(T)$ separating foreground droplets from background:
 
-$$\sigma_B^2(T) = \omega_0(T)\,\omega_1(T)\,\big[\mu_0(T) - \mu_1(T)\big]^2, \qquad T^* = \arg\max_{0 \le T \le 255} \sigma_B^2(T)$$
+$$
+\sigma_B^2(T) = \omega_0(T)\,\omega_1(T)\,\big[\mu_0(T) - \mu_1(T)\big]^2, \qquad T^* = \arg\max_{0 \le T \le 255} \sigma_B^2(T)
+$$
 
 where $\omega_0, \omega_1$ are the cumulative class probabilities and $\mu_0, \mu_1$ are the mean intensities of the two classes.
 
 #### 2. Morphological Denoising & Marker-Controlled Watershed
 Small binary artifacts are removed via morphological opening ($\circ$) using a $3 \times 3$ structuring element $K$:
 
-$$B_{\text{open}} = (B \ominus K) \oplus K$$
+$$
+B_{\text{open}} = (B \ominus K) \oplus K
+$$
 
 In dense emulsions where droplets touch one another, simple connected-component labeling would merge adjacent spheres into a single contour. To separate touching microbubbles:
 1. **Sure Background ($B_{\text{bg}}$):** Morphological dilation of $B_{\text{open}}$.
 2. **Euclidean Distance Transform ($D$):** Computes the $L_2$ distance from every foreground pixel $(x, y)$ to the nearest zero (background) pixel:
-   $$D(x, y) = \min_{(x', y') \in B_{\text{open}}^c} \sqrt{(x - x')^2 + (y - y')^2}$$
+   $$
+   D(x, y) = \min_{(x', y') \in B_{\text{open}}^c} \sqrt{(x - x')^2 + (y - y')^2}
+   $$
 3. **Sure Foreground Seeds ($B_{\text{fg}}$):** Thresholding the distance map at $0.5 \max(D)$ isolates the distinct centers of individual spherical droplets:
-   $$B_{\text{fg}}(x, y) = \begin{cases} 255, & D(x, y) > 0.5 \max(D) \\ 0, & \text{otherwise} \end{cases}$$
+   $$
+   B_{\text{fg}}(x, y) = \begin{cases} 255, & D(x, y) > 0.5 \max(D) \\ 0, & \text{otherwise} \end{cases}
+   $$
 4. **Watershed Flooding:** Connected components of $B_{\text{fg}}$ act as catchment basin markers, and the unknown boundary region $U = B_{\text{bg}} - B_{\text{fg}}$ is flooded via `cv2.watershed` to locate exact Ridge/Dam boundaries between touching bubbles.
 
 #### 3. Area-Equivalent Spherical Diameter & Spatial Calibration
 For each segmented droplet region $i$ with pixel area $A_i$ (filtered above noise threshold $A_{\min}$), the **area-equivalent circular diameter** in pixels and calibrated physical diameter are computed from $A = \frac{\pi}{4} d^2$:
 
-$$d_{i,\text{px}} = \sqrt{\frac{4 A_i}{\pi}}, \qquad d_i = s \cdot d_{i,\text{px}}$$
+$$
+d_{i,\text{px}} = \sqrt{\frac{4 A_i}{\pi}}, \qquad d_i = s \cdot d_{i,\text{px}}
+$$
 
 where $s$ is the spatial calibration factor (physical units per pixel, e.g., $s = \frac{50\ \mu\text{m}}{100\ \text{px}} = 0.5\ \mu\text{m/px}$).
 
@@ -76,11 +88,15 @@ where $s$ is the spatial calibration factor (physical units per pixel, e.g., $s 
 
 Given $N$ detected droplets $\{d_1, d_2, \dots, d_N\}$, the sample mean diameter $\mu$ and standard deviation $\sigma$ are:
 
-$$\mu = \frac{1}{N} \sum_{i=1}^{N} d_i, \qquad \sigma = \sqrt{\frac{1}{N} \sum_{i=1}^{N} (d_i - \mu)^2}$$
+$$
+\mu = \frac{1}{N} \sum_{i=1}^{N} d_i, \qquad \sigma = \sqrt{\frac{1}{N} \sum_{i=1}^{N} (d_i - \mu)^2}
+$$
 
 The dimensionless **Polydispersity Index (PDI)** quantifies the breadth (heterogeneity) of the droplet size distribution:
 
-$$\text{PDI} = \left(\frac{\sigma}{\mu}\right)^2$$
+$$
+\text{PDI} = \left(\frac{\sigma}{\mu}\right)^2
+$$
 
 - **$\text{PDI} < 0.05$:** Highly monodisperse emulsion (uniform droplet size; minimal Laplace pressure gradient between droplets, resisting Ostwald ripening).
 - **$0.05 \le \text{PDI} \le 0.20$:** Narrow to moderate size distribution typical of well-homogenized laboratory emulsions.
@@ -95,14 +111,18 @@ Notice that $\text{PDI}$ is **scale-invariant**: multiplying all diameters by an
 #### 1. Physical Link Between Droplet Size and Phase Separation (Stokes' Law)
 In dilute gravitational creaming or sedimentation, the terminal velocity $v_s$ of a droplet of diameter $d$ in a continuous phase of viscosity $\eta$ and density contrast $\Delta \rho$ follows **Stokes' Law**:
 
-$$v_s = \frac{\Delta \rho \, g \, d^2}{18 \eta}$$
+$$
+v_s = \frac{\Delta \rho \, g \, d^2}{18 \eta}
+$$
 
 Because phase-separation velocity scales quadratically with droplet diameter ($v_s \propto d^2$), formulations with smaller mean diameter $\mu$ and lower $\text{PDI}$ exhibit substantially slower creaming/coalescence and longer macroscopic stability.
 
 #### 2. First-Order Exponential Decay Model
 The height of the opaque emulsion layer $h(t)$ as phase separation progresses over time $t$ is modeled as a first-order exponential decay process:
 
-$$h(t) = h_0 \, e^{-kt}$$
+$$
+h(t) = h_0 \, e^{-kt}
+$$
 
 where:
 - $h_0$ is the extrapolated initial emulsion height at $t = 0$,
@@ -111,28 +131,44 @@ where:
 #### 3. Parameter Estimation: Two-Point Analytical Solution vs. Multi-Point OLS
 - **Case A — Two Experimental Time Points ($M = 2$):**
   For a target pH clamped to $[1.5, 12.0]$, $h_1(\text{pH})$ and $h_2(\text{pH})$ are obtained via piecewise linear interpolation:
-  $$h_m(\text{pH}) = h_{m,j} + \frac{\text{pH} - \text{pH}_j}{\text{pH}_{j+1} - \text{pH}_j}\,(h_{m,j+1} - h_{m,j}), \qquad \text{pH}_j \le \text{pH} \le \text{pH}_{j+1}$$
+  $$
+  h_m(\text{pH}) = h_{m,j} + \frac{\text{pH} - \text{pH}_j}{\text{pH}_{j+1} - \text{pH}_j}\,(h_{m,j+1} - h_{m,j}), \qquad \text{pH}_j \le \text{pH} \le \text{pH}_{j+1}
+  $$
   If $h_2 < h_1$, solving $h_1 = h_0 e^{-k t_1}$ and $h_2 = h_0 e^{-k t_2}$ analytically yields:
-  $$k = \frac{\ln(h_1 / h_2)}{t_2 - t_1}, \qquad h_0 = h_1 \, e^{k t_1}$$
+  $$
+  k = \frac{\ln(h_1 / h_2)}{t_2 - t_1}, \qquad h_0 = h_1 \, e^{k t_1}
+  $$
   If $h_2 \ge h_1$ (no measurable height loss over the observation window), $k = 0$ and the emulsion is classified as steady/highly stable.
 
 - **Case B — Multiple Time Periods ($M \ge 3$ in the Multi-Parameter Grid):**
   Linearizing the exponential law by taking the natural logarithm gives:
-  $$\ln h(t_i) = \ln h_0 - k t_i$$
+  $$
+  \ln h(t_i) = \ln h_0 - k t_i
+  $$
   Ordinary Least Squares (OLS) linear regression on $\{(t_i, \ln h_i)\}_{i=1}^{M}$ yields slope $m$ and intercept $c$:
-  $$m = \frac{\sum_{i=1}^{M}(t_i - \bar{t})(\ln h_i - \overline{\ln h})}{\sum_{i=1}^{M}(t_i - \bar{t})^2}, \qquad c = \overline{\ln h} - m \bar{t}$$
-  $$k = \max(0, -m), \qquad h_0 = e^{c}$$
+  $$
+  m = \frac{\sum_{i=1}^{M}(t_i - \bar{t})(\ln h_i - \overline{\ln h})}{\sum_{i=1}^{M}(t_i - \bar{t})^2}, \qquad c = \overline{\ln h} - m \bar{t}
+  $$
+  $$
+  k = \max(0, -m), \qquad h_0 = e^{c}
+  $$
   Goodness-of-fit in log-space is quantified via the **coefficient of determination ($R^2$)**:
-  $$R^2 = 1 - \frac{\text{SS}_{\text{res}}}{\text{SS}_{\text{tot}}} = 1 - \frac{\sum_{i=1}^{M} \big(\ln h_i - (c + m t_i)\big)^2}{\sum_{i=1}^{M} \big(\ln h_i - \overline{\ln h}\big)^2}$$
+  $$
+  R^2 = 1 - \frac{\text{SS}_{\text{res}}}{\text{SS}_{\text{tot}}} = 1 - \frac{\sum_{i=1}^{M} \big(\ln h_i - (c + m t_i)\big)^2}{\sum_{i=1}^{M} \big(\ln h_i - \overline{\ln h}\big)^2}
+  $$
 
 #### 4. Half-Life ($t_{1/2}$), Height Retention, and Stability Classification
 The **emulsion half-life** $t_{1/2}$ is the time required for the emulsion band height to decay to half its initial value ($h(t_{1/2}) = h_0 / 2$):
 
-$$\frac{h_0}{2} = h_0 e^{-k t_{1/2}} \implies t_{1/2} = \frac{\ln 2}{k}$$
+$$
+\frac{h_0}{2} = h_0 e^{-k t_{1/2}} \implies t_{1/2} = \frac{\ln 2}{k}
+$$
 
 The **height retention percentage** at the final measured time point is:
 
-$$\text{Retention (\%)} = \frac{h_{\text{final}}}{h_0} \times 100$$
+$$
+\text{Retention (\%)} = \frac{h_{\text{final}}}{h_0} \times 100
+$$
 
 Qualitative stability classes are assigned from $t_{1/2}$ (converted to days, $t_{1/2,\text{days}} = t_{1/2,\text{min}} / 1440$):
 
@@ -149,7 +185,9 @@ Two ensemble tree regressors ($\hat{f}_{\mu}$ for mean diameter in $\mu\text{m}$
 #### 3. Actual vs. Predicted Comparison Metrics
 Both the experimental micrograph and ML-predicted micrograph are segmented identically via Otsu thresholding + $3 \times 3$ morphological opening + 8-connected component analysis (`cv2.connectedComponentsWithStats`), comparing:
 
-$$\Delta \text{PDI} = \big|\text{PDI}_{\text{actual}} - \text{PDI}_{\text{predicted}}\big|, \qquad \Delta \mu = \big|\mu_{\text{actual}} - \mu_{\text{predicted}}\big|$$
+$$
+\Delta \text{PDI} = \big|\text{PDI}_{\text{actual}} - \text{PDI}_{\text{predicted}}\big|, \qquad \Delta \mu = \big|\mu_{\text{actual}} - \mu_{\text{predicted}}\big|
+$$
 
 ---
 
@@ -249,9 +287,8 @@ UGP/
 ```bash
 cd fast-api
 pip install -r requirements.txt
-python -m uvicorn main:app --reload --host 127.0.0.1 --port 8000
+python main.py
 ```
-The API server runs at `http://127.0.0.1:8000` (interactive Swagger docs at `http://127.0.0.1:8000/docs`).
 
 ### 2. Configure & Start the React Frontend
 Create a `.env` file inside `frontend/` (if not already present):
